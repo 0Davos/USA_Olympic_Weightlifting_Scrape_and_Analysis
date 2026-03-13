@@ -118,12 +118,34 @@ Segmented evaluation revealed significant heteroskedasticity — MAE shrinks at 
 
 ## Future Work
 
+- Refactor code to auto-update CSV file, instead of database. This would also include implementing GitHub Actions
+- Scrape by athlete profile, to gain unique ID's, region, and age, which could lead to many more insights and possibly improved models
+- Model probability of "bomb-outs" separately
+- Focus modeling on higher percentile of lifters, where it can be more useful
+- Host visualizations for coaches and athletes (coming soon)
+
 ## Setup
-
-# Analysis
-
-## Driving question
-
-## How it works
-
-## Tech stack
+```bash
+git clone https://github.com/0Davos/USA_Olympic_Weightlifting_Scrape_and_Analysis.git
+pip install -r requirements.txt
+playwright install chromium
+```
+ 
+Create a `.env` file in the root directory:
+```
+SUPABASE_URL=your_url
+SUPABASE_KEY=your_key
+USAW_EMAIL=your_usaw_email
+USAW_PASSWORD=your_usaw_password
+```
+ 
+Run the scraper:
+```bash
+python meet_scraper.py
+```
+ 
+To open the analysis notebook:
+```bash
+jupyter notebook
+```
+Then move into the EDA folder.
