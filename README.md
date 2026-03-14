@@ -13,7 +13,8 @@ This project builds an end-to-end system that:
 ## Data Collection — `meet_scraper.py`
 
 ### Implementation
-This scraper uses Playwright to automate a headless Chromium browser, log into the USAW athlete portal, wait for 2FA, and then navigate to every meet result page across all specified dates.
+This scraper uses Playwright to automate a headless Chromium browser, log into the USAW athlete portal, then navigates to every meet result page across all specified dates.
+
 It:
 - Handles USAW's multi-factor authentication, awaits user input
 - Paginates through both meet listings and per-meet athlete result tables
@@ -27,8 +28,7 @@ It:
 ## About the Data
 All data is sourced from USA Weightlifting's result portal, which tracks every USAW sanctioned competiton result since 2012.
 
-- Total entries: 
-- Unique athletes: 
+- Total entries: 282,000
 - Fields: Meet name, date, athlete name, bodyweight, snatch attempts (3), clean & jerk attempts (3), best snatch, best C&J, total, weight category, gender, age group
 
 Note: Athletes are only able to be identified by name in this current scraping format, as it contains no unique IDs. Thus, athletes with unique names are grouped together, which is a known limitation. This should not affect general trends found by models.
@@ -57,18 +57,18 @@ Note: Athletes are only able to be identified by name in this current scraping f
 ### Visualizations
 - Total vs. bodyweight scatterplot by gender
 - Bodyweight and total distributions by gender
-- 31-feature correlation heatmpa
+- 31-feature correlation heatmap
 - Competition entries by year
 - Bodyweight vs. total with 50th and 85th percentile curves overlaid by weight class
 
 ### Segmented Analysis
-Athletes are separated into current IWF weight categories, then segmented into performance percentiles within their class
+Athletes are separated into current (2025) IWF weight categories, then segmented into performance percentiles within their class
 
 | Segment | Size |
 |---|---|
-| Low (<50th percentile) | [X] entries |
-| Mid (50th–85th) | [X] entries |
-| High (85th–100th) | [X] entries |
+| Low (<50th percentile) | 135,710 entries |
+| Mid (50th–85th) | 95,155 entries |
+| High (85th–100th) | 40,697 entries |
 
 A utility function `get_performance_percentile(bodyweight, total, gender)` calculates any lifter's percentile rank relative to the full historical dataset within their weight class.
 
@@ -77,11 +77,11 @@ Four regression models trained on pre-2024 data, evaluated on 2024+ data:
  
 | Model | MAE (kg) | RMSE (kg) | R² |
 |---|---|---|---|
-| Linear Regression | [X] | [X] | [X] |
-| Random Forest | [X] | [X] | [X] |
-| XGBoost (baseline) | [X] | [X] | [X] |
-| XGBoost (tuned) | [X] | [X] | [X] |
-| Neural Network | [X] | [X] | [X] |
+| Linear Regression | 16.58 | 24.06 | 0.853 |
+| Random Forest | 10.61 | 17.92 | 0.919 |
+| XGBoost (baseline) | 10.19 | 17.58 | 0.922 |
+| XGBoost (tuned) | 10.04 | 17.47 | 0.923 |
+| Neural Network | 10.82 | 17.88 | 0.919 |
 
 Hyperparameter tuning for XGBoost was done used `RandomizedSearchCV` with 5-fold cross-validation across depth, learning rate, and estimator count. The neural network used a 4-layer MLP with BatchNormalization, Dropout, EarlyStopping, and ReduceLROnPlateau callbacks.
 
@@ -91,18 +91,17 @@ Segmented evaluation revealed significant heteroskedasticity — MAE shrinks at 
 
 ## Overall Key Findings
 
-- **Best snatch and best C&J to date** were the strongest predictors of current total (correlations: [X] and [X] respectively) — *fill in from correlation matrix*
-- **XGBoost outperformed all models** with a test MAE of [X]kg and R² of [X]
-- **Prediction accuracy improves with competition history** — athletes with 10+ meets were significantly easier to predict than first-time competitors, confirming that feature engineering compounds with experience
-- **Miss rates differ meaningfully by attempt** — first-attempt misses were rarest ([X]%), third-attempt misses most common ([X]%), consistent with competitive attempt selection strategy
-- **Elite athletes miss less** — top 15th percentile athletes missed at [X]% vs [X]% for bottom 50th percentile
-- **The sport has grown substantially** — entries peaked in [year] at [X], with an average of [X] entries per year across the dataset
+- **Last comp total to date** was the strongest predictors of current total (correlation: 0.98)
+- **XGBoost outperformed all models** with a test MAE of 10.04kg and R² of 0.923
+- **Prediction accuracy improves with competition history** — athletes with more meets were significantly easier to predict than first-time competitors, confirming that feature engineering compounds with experience
+- **Miss rates differ meaningfully by attempt** — first-attempt clean and jerk misses were rarest (10.3%), third-attempt clean and jerk misses most common (43.8%), consistent with competitive attempt selection strategy
+- **Elite athletes miss more** — top 15th percentile athletes missed at 29.5% (Snatch) and 32.2% (Clean&Jerk) vs 25.6% and 23.9% (Snatch, Clean&Jerk respectively) for bottom 50th percentile
 
 ## Error Analysis
  
 **Residuals by Performance Segment (Tuned XGBoost)**
  
-[residual boxplot here]
+![residual boxplot](extra/residual_plot.png)
  
 - The model's error shrinks significantly at higher performance percentiles, confirming the heteroskedasticity identified in segmented evaluation
 - Lower percentile athletes show wider residual spread, consistent with sparser feature histories and more variable performance
@@ -149,3 +148,11 @@ To open the analysis notebook:
 jupyter notebook
 ```
 Then move into the EDA folder.
+
+### Optional
+To run Neural Network cell, requires python 3.11 or earlier
+```bash
+pip install tensorflow
+```
+Then uncomment all lines related to the neural network.
+
