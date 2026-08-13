@@ -1,0 +1,30 @@
+# Working Agreement — USA Olympic Weightlifting Scrape & Analysis
+
+These rules govern how Claude should operate in this project. They apply to every session automatically.
+
+## Operating Rules
+
+1. **No drift.** Stick to the task the user actually asked for. If something adjacent looks broken or improvable, mention it briefly and ask before touching it — don't fix it as a side effect of the current task.
+2. **Permission before code changes.** Never edit, create, or delete a file in this repo without stating the specific change first and getting a go-ahead. Exceptions only if the user explicitly says "just do it" / "go ahead without asking" for a given task.
+3. **Limit token loss.**
+   - Don't re-read files already read this session unless they may have changed.
+   - Don't dump full CSV/notebook contents into context — sample, grep, or use pandas `.head()`/`.describe()` style checks instead.
+   - `EDA/EDA.ipynb` is ~2.5MB — never read it in full; target specific cells or use `jq`/nbconvert to inspect.
+   - `data/meet_results*.csv` are 300K+ rows — never cat the whole file; use `pandas`, `wc -l`, or `head`.
+   - Prefer targeted Grep/Glob over broad exploration when the file is already known.
+4. **Read back before announcing.** After making a change, re-open the diff/output and check it actually does what was claimed before telling the user it's done. Don't report success from intent alone.
+
+## Project Snapshot
+
+- **Pipeline:** `scraper/meet_scraper.py` (Playwright, logs into USAW portal, handles 2FA, scrapes meet results, appends new rows to `data/meet_results.csv`, deduped on `(Meet, Name, Bodyweight)`) → `transform/meet_clean.py` (parses `Weight Category` into age group/gender/bodyweight class, drops duplicates, removes physiologically-impossible outliers, converts missed lifts to NaN + miss flags; known data-entry errors fixed by content match, not row index; full rebuild each run, writes `data/meet_results_CLEANED.csv`) → `transform/feature_engineering.py` (24 leakage-safe rolling/expanding features per athlete, plus `weight_class`/`performance_percentile` — the latter two are shared by the notebook's segmented analysis and `models/evaluate.py`, single source of truth; reads the cleaned CSV, writes `data/meet_results_FEATURES.csv`) → `models/train.py` (LR, RF, XGBoost baseline + tuned; `train_all(df)` returns fitted models + train/test splits for reuse) → `models/evaluate.py` (segment-aware MAE breakdown + residual plot; fixed a scale bug from the original notebook — see below) → `EDA/EDA.ipynb` (now ends after the segmented-analysis-setup section; modeling/evaluation/write-up cells removed, extracted to the files above) → `docs/findings.md` (Key Findings/Error Analysis/Limitations/Future Work, moved verbatim from the notebook, plus the NN post-mortem kept as historical record). Project is CSV-only now — Supabase was removed (2026-08-06).
+- **Data:** `data/meet_results.csv` (raw, ~321K rows) → `data/meet_results_CLEANED.csv` (~282K rows after cleaning) → `data/meet_results_FEATURES.csv` (same row count, +26 columns: 24 leakage-safe features + `weight_class` + `performance_percentile`, model-ready). No unique athlete ID — athletes are grouped by name only (known limitation).
+- **Models:** Linear Regression, Random Forest, XGBoost (baseline + tuned) in `models/train.py`. Verified against real data (2026-08-07): baseline MAE matches historical figures closely (LR 16.58kg exact match, RF 10.60kg vs historical 10.61kg), tuned XGBoost MAE 10.04kg vs historical 10.02kg. Neural Network dropped entirely (Python 3.12/tensorflow incompatibility, never fixed) — CatBoost/LightGBM/ElasticNet are the planned replacements to evaluate (see `ROADMAP.md`). The saved `best_nn_model.h5`/`.keras` artifacts were deleted since nothing references them anymore.
+- **Known bug fixed during extraction:** the notebook's segment-aware evaluation compared `performance_percentile` (a 0-100 scale) against 0.5/0.85 thresholds, so "top 15%" actually covered nearly the whole test set. Fixed in `models/evaluate.py` (uses 50/85). Corrected XGBoost segment MAE: bottom-50th 11.47kg, top-15th 8.91kg (~1.3x gap) — much more modest than the original (buggy) figures still recorded in `docs/findings.md` (52.36kg vs 9.76kg, ~5.5x gap), which are flagged there as historical/unreliable but not yet replaced with corrected numbers.
+- **`extra/`** — `athlete_scraper.py` (1057 lines, athlete-profile-level scraper, not yet wired into main pipeline) and `meet_present.py` — exploratory/WIP, not part of the documented pipeline in README.
+- **`db/` and `exercises/`** — currently empty directories.
+- **Secrets:** `.env` holds `USAW_EMAIL`, `USAW_PASSWORD` — never print its contents or commit it.
+- **README.md** has several unfilled placeholders (`[X]` values for entry counts, model metrics, correlations, year peaks) — the analysis narrative isn't fully backed by run numbers yet.
+
+## Deferred Ideas (not scheduled — revisit later)
+
+- **Scraper 2FA automation via a dedicated email.** GitHub Actions can't clear USAW's login 2FA prompt today (code delivered by email/SMS, nothing to generate programmatically), so `meet_scraper.py` stays a manual/local-only run — see `ROADMAP.md`. Possible future fix: register a free-standing email address as the contact email on the USAW account (used only for 2FA codes, nothing else), then have a GitHub Action poll that inbox via IMAP, parse the code, and complete login automatically. Decided against for now (2026-08-06) — handing an automated process access to an inbox felt like too much added risk for the current value. Revisit if full scraper automation becomes worth it.

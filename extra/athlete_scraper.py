@@ -2,6 +2,7 @@
 from playwright.sync_api import sync_playwright
 import time
 import pandas as pd
+import os
 
 # 248 categories
 '''
@@ -836,8 +837,8 @@ def log_into_USAW(p):
     page = browser.new_page()
     page.goto("https://usaweightlifting.sport80.com/v/1023105/r/rankings?filters=eyJkYXRlX3JhbmdlX3N0YXJ0IjoiMjAyNS0wMS0wMSIsImRhdGVfcmFuZ2VfZW5kIjoiMjAyNS0xMi0zMSJ9")
 
-    email = "odavis.1555@gmail.com"
-    password = "SLifts557whoza"
+    email = os.environ["USAW_EMAIL"]
+    password = os.environ["USAW_PASSWORD"]
 
     # Fill out username and password fields
     page.fill("#username", email)

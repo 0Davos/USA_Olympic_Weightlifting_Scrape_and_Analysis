@@ -8,24 +8,20 @@ from playwright.sync_api import sync_playwright
 import time
 import pandas as pd
 from dotenv import load_dotenv
-from supabase import create_client, Client
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+CSV_PATH = os.path.join(SCRIPT_DIR, "..", "data", "meet_results.csv")
 
 def scrape_meets():
     # Setup playwright
     with sync_playwright() as p:
         # --------------------------
         # Log into USAW
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(headless=False)
         page = browser.new_page()
-        page.goto("https://usaweightlifting.sport80.com/v/1023105/r/results?filters=eyJkYXRlX3JhbmdlX3N0YXJ0IjoiMjAyNS0wMS0wMSIsImRhdGVfcmFuZ2VfZW5kIjoiMjAyNS0xMi0zMSJ9")
+        page.goto("https://usaweightlifting.sport80.com/v/1023105/r/results?filters=eyJkYXRlX3JhbmdlX3N0YXJ0IjoiMjAyNi0wMS0wMSIsImRhdGVfcmFuZ2VfZW5kIjoiMjAyNi0xMi0zMSJ9")#("https://usaweightlifting.sport80.com/v/1023105/r/results?filters=eyJkYXRlX3JhbmdlX3N0YXJ0IjoiMjAyNS0wMS0wMSIsImRhdGVfcmFuZ2VfZW5kIjoiMjAyNS0xMi0zMSJ9")
 
         load_dotenv()
-        SUPABASE_URL = os.environ["SUPABASE_URL"]
-        SUPABASE_KEY = os.environ["SUPABASE_KEY"]
-        if not SUPABASE_URL or not SUPABASE_KEY:
-            print("Error: Supabase credentials not found in environment variables")
-            return
-        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
         email = os.environ["USAW_EMAIL"]
         password = os.environ["USAW_PASSWORD"]
@@ -56,7 +52,7 @@ def scrape_meets():
         # Log into USAW
         # --------------------------
 
-        """
+        
         # --------------------------
         # Click to right date
 
@@ -69,7 +65,7 @@ def scrape_meets():
         # loop to click into the desired past
         # Last month of meets is in January 2011
         year = str(datetime.now().year)
-        target_month = f"January {year}"
+        target_month = "August 2025"#f"January {year}"
         month_button = page.locator("div.v-date-picker-header__value button").first
         while True:
             current_month = month_button.inner_text()
@@ -87,7 +83,7 @@ def scrape_meets():
         print("PASSED - click to right month")
         # Click to right month
         # --------------------------
-        """
+        
 
         # --------------------------
         # SCRAPING TIME
@@ -215,13 +211,13 @@ def scrape_meets():
                         print("Table did not update after Next — breaking.")
                         break
 
-        print(f"Scraping complete. Preparing to insert {len(all_data)} records to Supabase...")
+        print(f"Scraping complete. Preparing to process {len(all_data)} records...")
         # SCRAPING TIME
         # --------------------------
 
         # --------------------------
         # Clean all_data
-        supabase_data = []
+        parsed_data = []
         for row_cells in all_data:
             # Map each row to dictionary with your column names
             athlete_dict = {
@@ -239,44 +235,54 @@ def scrape_meets():
                 "Best Sn": row_cells[11] if len(row_cells) > 11 else None,
                 "Best CJ": row_cells[12] if len(row_cells) > 12 else None,
                 "Total": row_cells[13] if len(row_cells) > 13 else None,
-                "WC_AgeGroup": row_cells[14] if len(row_cells) > 14 else "",
-                "WC_Gender": row_cells[15] if len(row_cells) > 15 else "",
-                "WC_BW": row_cells[16] if len(row_cells) > 16 else ""
             }
-            supabase_data.append(athlete_dict)
+            parsed_data.append(athlete_dict)
 
         # Clean
         # --------------------------
 
 
         # --------------------------
-        # Push to Supabase 
-        if supabase_data:
-            print(f"Found {len(supabase_data)} rows before deduplication")
-            
-            # Remove duplicates based on your unique constraint
+        # Append to CSV
+        if parsed_data:
+            print(f"Found {len(parsed_data)} rows before deduplication")
+
+            # Remove duplicates based on the unique constraint
             seen = set()
             deduped_data = []
-            
-            for row in supabase_data:
-                # Create a unique key based on your constraint columns
+
+            for row in parsed_data:
+                # Create a unique key based on the constraint columns
                 key = (row.get("Meet", ""), row.get("Name", ""), row.get("Bodyweight", ""))
-                
+
                 if key not in seen:
                     seen.add(key)
                     deduped_data.append(row)
-            
+
             print(f"After deduplication: {len(deduped_data)} unique rows")
-            
-            try:
-                response = supabase.table("meet_results").upsert(
-                    deduped_data, 
-                    on_conflict='Meet,Name,Bodyweight'
-                ).execute()
-                print(f"Successfully upserted {len(deduped_data)} records!")
-            except Exception as e:
-                print(f"Error inserting to Supabase: {e}")
-        # Push to Supabase 
+
+            new_df = pd.DataFrame(deduped_data)
+            file_exists = os.path.exists(CSV_PATH) and os.path.getsize(CSV_PATH) > 0
+
+            if file_exists:
+                # Drop any rows already present in the CSV, keyed the same way as above
+                existing_df = pd.read_csv(CSV_PATH, dtype=str)
+                existing_keys = set(zip(
+                    existing_df["Meet"].astype(str),
+                    existing_df["Name"].astype(str),
+                    existing_df["Bodyweight"].astype(str),
+                ))
+                new_df = new_df[~new_df.apply(
+                    lambda r: (str(r["Meet"]), str(r["Name"]), str(r["Bodyweight"])) in existing_keys,
+                    axis=1
+                )]
+
+            if new_df.empty:
+                print("No new rows to append — CSV already up to date.")
+            else:
+                new_df.to_csv(CSV_PATH, mode='a', header=not file_exists, index=False)
+                print(f"Appended {len(new_df)} new rows to {CSV_PATH}")
+        # Append to CSV
         # --------------------------
 
 
