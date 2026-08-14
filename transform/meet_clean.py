@@ -73,6 +73,19 @@ def parse_weight_category(cat):
     return pd.Series([age_group, gender, bw])
 
 
+def parse_mixed_format_dates(date_series):
+    """Parses a Date column/Series that may contain a mix of US (M/D/YYYY) and
+    ISO (YYYY-MM-DD) formatted strings - the original bulk-loaded historical
+    data uses US format, while meet_scraper.py's own output uses ISO. pandas'
+    default date parsing infers a single format from the whole column and
+    silently fails (NaT) on whichever format doesn't match, so both are tried
+    explicitly here instead."""
+    parsed = pd.to_datetime(date_series, format='%m/%d/%Y', errors='coerce')
+    still_missing = parsed.isna()
+    parsed.loc[still_missing] = pd.to_datetime(date_series[still_missing], format='%Y-%m-%d', errors='coerce')
+    return parsed
+
+
 def parse_weight_categories(df):
     df['Weight Category'] = (
         df['Weight Category']
@@ -95,7 +108,7 @@ def clean_meet_data(df):
     df_cleaned = df.drop(columns="WC_BW")
     df_cleaned = df_cleaned.rename(columns={"WC_Gender": "Gender", "WC_AgeGroup": "Age Group"})
 
-    df_cleaned['Date'] = pd.to_datetime(df_cleaned['Date'], errors='coerce')
+    df_cleaned['Date'] = parse_mixed_format_dates(df_cleaned['Date'])
     df_cleaned = df_cleaned.drop_duplicates()
 
     # Remove physiologically impossible outliers
