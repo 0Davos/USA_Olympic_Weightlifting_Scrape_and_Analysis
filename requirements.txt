@@ -3,7 +3,7 @@ playwright
 python-dotenv
 
 # Cleaning & feature engineering (transform/meet_clean.py, transform/feature_engineering.py)
-pandas
+pandas==2.2.2
 numpy
 
 # Modeling (models/train.py, models/evaluate.py)

@@ -94,7 +94,7 @@ def parse_weight_categories(df):
         .str.replace('\xa0', ' ', regex=False)
         .str.replace('\u200b', '', regex=False)
         .str.replace('\ufeff', '', regex=False)  # remove BOM
-        .apply(lambda x: re.sub(r'\s+', ' ', x))  # collapse any kind of whitespace to a single space
+        .apply(lambda x: re.sub(r'\s+', ' ', x) if isinstance(x, str) else x)  # collapse any kind of whitespace to a single space
     )
     df['Weight Category'] = df['Weight Category'].apply(clean_category)
     df[['WC_AgeGroup', 'WC_Gender', 'WC_BW']] = df['Weight Category'].apply(parse_weight_category)
