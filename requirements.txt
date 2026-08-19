@@ -1,0 +1,18 @@
+# Scraper (scraper/meet_scraper.py)
+playwright
+python-dotenv
+
+# Cleaning & feature engineering (transform/meet_clean.py, transform/feature_engineering.py)
+pandas
+numpy
+
+# Modeling (models/train.py, models/evaluate.py)
+scikit-learn
+xgboost
+catboost
+lightgbm
+joblib
+matplotlib
+
+# EDA notebook (EDA/EDA.ipynb)
+seaborn
