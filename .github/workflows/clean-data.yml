@@ -7,9 +7,6 @@ on:
       - 'data/meet_results.csv'
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
   clean-data:
     runs-on: ubuntu-latest
@@ -32,10 +29,7 @@ jobs:
       - name: Run feature engineering
         run: python transform/feature_engineering.py
 
-      - name: Commit and push updated files
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/meet_results_CLEANED.csv data/meet_results_FEATURES.csv
-          git diff --staged --quiet || git commit -m "Auto-update cleaned and feature-engineered data"
-          git push
+      - name: Load data into Supabase
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: python transform/load_to_supabase.py
