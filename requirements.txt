@@ -6,6 +6,10 @@ python-dotenv
 pandas==2.2.2
 numpy
 
+# Loading data into Supabase (transform/load_to_supabase.py)
+sqlalchemy
+psycopg2-binary
+
 # Modeling (models/train.py, models/evaluate.py)
 scikit-learn
 xgboost
