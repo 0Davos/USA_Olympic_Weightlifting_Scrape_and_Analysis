@@ -48,9 +48,34 @@ def count_comps_last_180_days(group):
 
 
 def engineer_features(df_cleaned):
+    """Bomb-outs (bombed_out=True, Total=0) are kept in the output but handled in two
+    tiers, so a Total=0 never reads as a real performance:
+      - Performance-history features (bests, trends, miss rates, last-comp total, ...)
+        are computed on non-bomb-out rows only, exactly as if bomb-outs didn't exist.
+        A bomb-out row itself gets NaN for these (never trained on), and an athlete's
+        next real meet still sees their last real total, not a 0.
+      - Attendance features (comp count, days since last comp, ...) are computed over
+        every row, since a bomb-out is still a competition the athlete showed up to.
+    """
     # Sort by athlete and date first
     df_cleaned = df_cleaned.sort_values(['Name', 'Date']).reset_index(drop=True)
 
+    df_cleaned['Gender Binary'] = df_cleaned['Gender'].map({
+        'Men': 0,
+        'Women': 1
+    })
+
+    valid = add_performance_features(df_cleaned[~df_cleaned['bombed_out']].copy())
+    perf_cols = [c for c in valid.columns if c not in df_cleaned.columns]
+    df_cleaned = df_cleaned.join(valid[perf_cols])
+
+    df_cleaned = add_attendance_features(df_cleaned)
+    df_cleaned = add_segment_features(df_cleaned)
+
+    return df_cleaned
+
+
+def add_performance_features(df_cleaned):
     # Calculate expanding (cumulative) miss rates - excludes current row
     for col in MISS_COLS:
         # Shift(1) moves everything down by 1, so current row uses only previous data
@@ -80,16 +105,6 @@ def engineer_features(df_cleaned):
         .reset_index(level=0, drop=True)
     )
 
-    # Number of competitions before this one
-    df_cleaned['Num Competitions'] = df_cleaned.groupby('Name').cumcount()
-
-    # Time since last competition (in days)
-    df_cleaned['Days Since Last Comp'] = (
-        df_cleaned.groupby('Name')['Date']
-        .diff()
-        .dt.days
-    )
-
     # Last competition total
     df_cleaned['Last Comp Total'] = (
         df_cleaned.groupby('Name')['Total']
@@ -109,11 +124,6 @@ def engineer_features(df_cleaned):
     df_cleaned['Days Since Best Total'] = (
         (df_cleaned['Date'] - df_cleaned['Date of Best Total']).dt.days
     )
-
-    df_cleaned['Gender Binary'] = df_cleaned['Gender'].map({
-        'Men': 0,
-        'Women': 1
-    })
 
     # Recent performance trend (last 3 comps)
     df_cleaned['total_trend_last_3'] = (
@@ -157,6 +167,20 @@ def engineer_features(df_cleaned):
         .reset_index(level=0, drop=True)
     )
 
+    return df_cleaned
+
+
+def add_attendance_features(df_cleaned):
+    # Number of competitions before this one
+    df_cleaned['Num Competitions'] = df_cleaned.groupby('Name').cumcount()
+
+    # Time since last competition (in days)
+    df_cleaned['Days Since Last Comp'] = (
+        df_cleaned.groupby('Name')['Date']
+        .diff()
+        .dt.days
+    )
+
     # Competition Frequency - simpler and more reliable approach
     df_cleaned['comps_last_180_days'] = (
         df_cleaned.groupby('Name', group_keys=False)
@@ -175,8 +199,6 @@ def engineer_features(df_cleaned):
         df_cleaned['Days Since Last Comp'] - df_cleaned['avg_days_between_comps']
     )
 
-    df_cleaned = add_segment_features(df_cleaned)
-
     return df_cleaned
 
 
@@ -193,9 +215,12 @@ def add_segment_features(df):
         df.loc[women_mask, 'Bodyweight'], bins=WOMEN_BINS, labels=WOMEN_LABELS, right=False
     ).astype(object)
 
-    # Percentile rank of Total within weight class (0-100)
+    # Percentile rank of Total within weight class (0-100). Ranked among real
+    # performances only - bomb-outs (Total=0) would otherwise pile up at the bottom
+    # of every class and shift everyone else's percentile; they get NaN instead.
+    real_totals = df['Total'].where(~df['bombed_out'])
     df['performance_percentile'] = (
-        df.groupby('weight_class')['Total'].rank(pct=True) * 100
+        real_totals.groupby(df['weight_class']).rank(pct=True) * 100
     )
 
     return df
