@@ -36,6 +36,7 @@ COLUMN_MAP = {
     "Age Group": "age_group",
     "Gender": "gender",
     "weight_class": "weight_class",
+    "bombed_out": "bombed_out",
 }
 
 
@@ -50,6 +51,9 @@ def load_to_supabase():
 
     engine = create_engine(db_url)
     with engine.begin() as conn:
+        # The table was created before bombed_out existed; to_sql(append) won't add
+        # a missing column, so make sure it's there (no-op once it is).
+        conn.execute(text(f'ALTER TABLE "{TABLE_NAME}" ADD COLUMN IF NOT EXISTS bombed_out boolean'))
         conn.execute(text(f'TRUNCATE TABLE "{TABLE_NAME}"'))
         df.to_sql(TABLE_NAME, conn, if_exists='append', index=False, method='multi', chunksize=5000)
 

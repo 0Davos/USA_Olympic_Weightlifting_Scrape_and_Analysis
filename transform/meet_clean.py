@@ -115,7 +115,12 @@ def clean_meet_data(df):
     df_cleaned = df_cleaned[df_cleaned["Bodyweight"] <= 250]
     df_cleaned = df_cleaned[df_cleaned["Bodyweight"] > 0]
     df_cleaned = df_cleaned[df_cleaned["Total"] <= 400]
-    df_cleaned = df_cleaned[df_cleaned["Total"] > 0]
+
+    # Bomb-outs (Total <= 0) are kept as part of the true historical record and
+    # flagged instead of deleted - downstream steps (feature_engineering.py,
+    # models/train.py) are responsible for keeping them out of anything that
+    # would treat Total=0 as a real performance.
+    df_cleaned["bombed_out"] = df_cleaned["Total"] <= 0
 
     # Convert missed lifts (negative or zero) to NaN, preserving miss flags
     misses_to_nan_cols = ["Sn#1", "Sn#2", "Sn#3", "CJ#1", "CJ#2", "CJ#3"]
