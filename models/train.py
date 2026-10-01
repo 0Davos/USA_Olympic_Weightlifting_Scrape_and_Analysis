@@ -21,8 +21,6 @@ SAVED_MODELS_DIR = os.path.join(SCRIPT_DIR, "saved")
 
 FEATURE_COLS = [
     'Bodyweight',
-    'Sn#1_missed', 'Sn#2_missed', 'Sn#3_missed',
-    'CJ#1_missed', 'CJ#2_missed', 'CJ#3_missed',
     'athlete_avg_Sn#1_missed', 'athlete_avg_Sn#2_missed', 'athlete_avg_Sn#3_missed',
     'athlete_avg_CJ#1_missed', 'athlete_avg_CJ#2_missed', 'athlete_avg_CJ#3_missed',
     'best_snatch_to_date', 'best_cj_to_date',
@@ -60,6 +58,10 @@ QUANTILES = [0.25, 0.50, 0.75, 0.99]
 
 
 def prepare_train_test(df):
+    # Bomb-outs (Total=0) are a different kind of event, not a weak performance -
+    # kept in the data for the website, but never a training/eval target here.
+    df = df[~df['bombed_out']]
+
     # Split by date
     train = df[df['Date'] < '2024-01-01']
     test = df[df['Date'] >= '2024-01-01']

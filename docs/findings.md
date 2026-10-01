@@ -33,6 +33,8 @@ While I could change the Neural Network, I elected to leave it. I could bound re
 - The neural network and random forest both performed comparably with XGB (MAE:10.82kg, 10.61kg), but the neural network broke down in segmented evaluation, exposing unbounded predictions
 - Linear regression as a baseline model achieved an MAE of 16.58kg, which highlights that the majority of our predictive signals are linear.
 
+> **Note (2026-09-30):** all model figures on this page predate a leakage fix — the current meet's own six missed-attempt flags were removed from the feature list (only knowable after the meet). Cost ~0.26kg of MAE (baseline XGBoost 9.98→10.24kg). On the corrected features, returning athletes are predicted to ~7.1kg vs 8.2kg for a naive "same as last meet" guess, while first-time athletes sit near ~27.8kg.
+
 > **Note (2026-08-07):** the Neural Network has since been dropped from the pipeline entirely (see above). Its MAE figure here is kept as historical record.
 
 ### Segmented Evaluation
@@ -62,7 +64,7 @@ While I could change the Neural Network, I elected to leave it. I could bound re
 - Not able to see athlete training, injury, etc.
 - Some weight classes are "better" in comparison to top weightlifters of the world, some are not
 - Biased information towards athletes who have lifted for longer
-- Removed "bomb outs"
+- Bomb-outs are excluded from modeling (as of 2026-09-30 they are kept and flagged in the data rather than deleted)
 
 ## Future Work
 - Increase the number of segments (especially higher percentiles)

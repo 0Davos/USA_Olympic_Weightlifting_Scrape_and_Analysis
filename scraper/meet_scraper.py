@@ -60,10 +60,13 @@ def get_scrape_date_range(csv_path, cleaned_csv_path=None):
     else:
         df = pd.read_csv(csv_path)
     dates = parse_mixed_format_dates(df['Date'])
-    most_recent = dates.max()
+    end_date = datetime.now()
+    # Capped at today: the source occasionally has future-dated rows (e.g. a
+    # multi-week online meet with per-athlete dates past today), which would
+    # otherwise push start_date past end_date.
+    most_recent = min(dates.max(), pd.Timestamp(end_date))
 
     start_date = most_recent.replace(day=1)
-    end_date = datetime.now()
 
     return start_date, end_date
 
@@ -88,7 +91,7 @@ def scrape_meets():
     # appended ISO-format dates. Set RECOVERY_MODE to False (or delete this
     # block) once this recovery run is done, to resume normal operation via
     # get_scrape_date_range().
-    RECOVERY_MODE = True
+    RECOVERY_MODE = False
 
     if RECOVERY_MODE:
         start_date = datetime(2025, 1, 1)
