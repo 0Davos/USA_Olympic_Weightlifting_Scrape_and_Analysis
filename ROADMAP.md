@@ -36,6 +36,7 @@ Features:
 
 - [ ] **Home page** — frozen top bar (site name + athlete search box, wired to `ath_group_find`); a couple of main-area sections reserved for "best athletes by Q-points" (placeholder/empty for now — the computation doesn't exist yet, see Post-MVP); a bottom section with About/Privacy Policy/etc. links, all pointing to empty pages for now.
 - [ ] **Athlete page** — graph area (wired to `ath_indv_find`) with a results table below it. Graph top bar: Sn/CJ/Total dropdown, adjustable date range, a non-functional "Compare" button reserved for Post-MVP. Secondary bar below it: a non-functional "predict future?" checkbox that would gate a date selector and bodyweight selector, both reserved for Post-MVP's prediction feature.
+- [ ] **Page-load warm-up request** — when any page loads, the frontend fires one cheap request to the API (e.g. `/api/health`) so the serverless function's cold start (importing FastAPI/psycopg2) is paid before the user starts typing in the search box. Fire-and-forget: its result is ignored and a failure must never surface to the user.
 
 ### Post-MVP
 
@@ -46,6 +47,8 @@ Features:
 - [ ] **Meet lookup** — search/view a specific meet's results (carried over from the original feature list, not yet scoped).
 - [ ] **"Bomb out" rates and prediction** — historical bomb-out rate stats plus a predictive model for bomb-out likelihood (carried over; the data is now preserved via the `bombed_out` flag — see Phase 1 — but still needs a Supabase reload, and bomb-out rows currently carry NaN performance features that a predictor would need computed).
 - [ ] **A-standards integration** — incorporate IWF/USAW "A standard" qualifying totals to show best men's/women's athletes and % to standard (carried over, not yet scoped).
+- [ ] **Search: possibly require 2 characters before querying.** Decided 2026-10-06 to keep the home page's athlete search querying from the first typed letter. A one-letter prefix like `a` takes ~0.3-0.4s on a warm connection (it matches tens of thousands of rows) versus ~0.13-0.2s for 2+ letters, which is acceptable with a debounce. If it ever feels slow, require 2 characters before firing the query (`ath_group_find` itself needs no change).
+- [ ] **API connection tuning (once deployed on Vercel).** Each request currently opens a fresh database connection (0.7-1.85s from a dev machine, mostly distance to Supabase's us-west-2; unmeasured on Vercel, which doesn't exist yet). After the first deploy: (1) set the Vercel function region next to Supabase (e.g. `sfo1`) and measure real connect times; (2) only if that's still too slow, reuse one connection per warm function instance (module-level cache + liveness check + reconnect) - caveat: each warm instance then holds a slot in Supabase's Session Pooler, which has a small pool on the free tier.
 - [ ] Anything else that comes up.
 
 ## Phase 3 — Website Architecture & Deployment

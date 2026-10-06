@@ -1,2 +1,5 @@
-fastapi
-uvicorn
+fastapi==0.142.2
+uvicorn==0.54.0
+# Everything pinned to the versions tested locally (unpinned deps have caused CI-only failures before)
+psycopg2-binary==2.9.11
+python-dotenv==1.2.1
