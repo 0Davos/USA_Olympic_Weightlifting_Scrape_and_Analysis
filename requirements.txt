@@ -7,7 +7,8 @@ pandas==2.2.2
 numpy
 
 # Loading data into Supabase (transform/load_to_supabase.py)
-sqlalchemy
+# Pinned below 2.1: 2.1 switched the default postgresql:// driver to psycopg (v3), but we use psycopg2
+sqlalchemy==2.0.52
 psycopg2-binary
 
 # Modeling (models/train.py, models/evaluate.py)
