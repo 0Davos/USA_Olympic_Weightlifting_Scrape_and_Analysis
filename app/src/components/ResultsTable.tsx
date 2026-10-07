@@ -1,10 +1,24 @@
-const MOCK_RESULTS = [
-  { date: "2026-06-14", meet: "Sample Open", bodyweight: 81.2, bestSn: 120, bestCj: 150, total: 270 },
-  { date: "2026-03-02", meet: "Sample Qualifier", bodyweight: 80.4, bestSn: 117, bestCj: 147, total: 264 },
-  { date: "2025-11-09", meet: "Sample Classic", bodyweight: 82.0, bestSn: 115, bestCj: 145, total: 260 },
-];
+import type { Meet } from "@/lib/athlete";
 
-export default function ResultsTable() {
+function show(value: number | null) {
+  return value == null ? "—" : value;
+}
+
+// Newest first; meets with no date go last.
+function newestFirst(rows: Meet[]) {
+  return [...rows].sort((a, b) => {
+    if (a.date === b.date) return 0;
+    if (!a.date) return 1;
+    if (!b.date) return -1;
+    return a.date < b.date ? 1 : -1;
+  });
+}
+
+export default function ResultsTable({ rows }: { rows: Meet[] }) {
+  if (rows.length === 0) {
+    return <p className="text-sm text-black/50 dark:text-white/50">No meets in this date range.</p>;
+  }
+
   return (
     <table className="w-full border-collapse text-sm">
       <thead>
@@ -18,14 +32,18 @@ export default function ResultsTable() {
         </tr>
       </thead>
       <tbody>
-        {MOCK_RESULTS.map((r) => (
-          <tr key={r.date} className="border-b border-black/5 dark:border-white/5">
-            <td className="py-2 pr-4">{r.date}</td>
+        {newestFirst(rows).map((r, i) => (
+          <tr
+            key={`${r.date}-${r.meet}-${i}`}
+            className={`border-b border-black/5 dark:border-white/5 ${r.bombed_out ? "text-black/50 dark:text-white/50" : ""}`}
+          >
+            <td className="py-2 pr-4">{r.date ?? "—"}</td>
             <td className="py-2 pr-4">{r.meet}</td>
-            <td className="py-2 pr-4">{r.bodyweight}</td>
-            <td className="py-2 pr-4">{r.bestSn}</td>
-            <td className="py-2 pr-4">{r.bestCj}</td>
-            <td className="py-2 pr-4">{r.total}</td>
+            <td className="py-2 pr-4">{show(r.bodyweight)}</td>
+            {/* A bomb-out's best lifts are 0 when that lift was missed entirely */}
+            <td className="py-2 pr-4">{r.bombed_out && !r.best_sn ? "—" : show(r.best_sn)}</td>
+            <td className="py-2 pr-4">{r.bombed_out && !r.best_cj ? "—" : show(r.best_cj)}</td>
+            <td className="py-2 pr-4">{r.bombed_out ? "DNF" : show(r.total)}</td>
           </tr>
         ))}
       </tbody>

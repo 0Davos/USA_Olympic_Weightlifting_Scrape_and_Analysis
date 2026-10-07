@@ -1,29 +1,64 @@
 "use client";
 
 import { useState } from "react";
+import { METRICS, type Metric } from "@/lib/athlete";
 
-const METRICS = ["Sn", "Cj", "Total"] as const;
+type Props = {
+  metric: Metric;
+  onMetricChange: (metric: Metric) => void;
+  from: string;
+  to: string;
+  onFromChange: (from: string) => void;
+  onToChange: (to: string) => void;
+};
 
-export default function GraphControls() {
-  const [metric, setMetric] = useState<(typeof METRICS)[number]>("Total");
+const INPUT_CLASS =
+  "rounded-lg border border-black/10 bg-transparent px-3 py-1.5 text-sm dark:border-white/10";
+
+export default function GraphControls({ metric, onMetricChange, from, to, onFromChange, onToChange }: Props) {
+  // Post-MVP (future prediction): these three are placeholders and not wired to anything yet.
   const [predictFuture, setPredictFuture] = useState(false);
   const [targetDate, setTargetDate] = useState("");
   const [bodyweight, setBodyweight] = useState("");
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between gap-4">
-        <select
-          value={metric}
-          onChange={(e) => setMetric(e.target.value as (typeof METRICS)[number])}
-          className="rounded-lg border border-black/10 bg-transparent px-3 py-1.5 text-sm text-black dark:border-white/10"
-        >
-          {METRICS.map((m) => (
-            <option key={m} value={m}>
-              {m}
-            </option>
-          ))}
-        </select>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center gap-4">
+          <select
+            aria-label="Lift to graph"
+            value={metric}
+            onChange={(e) => onMetricChange(e.target.value as Metric)}
+            className="rounded-lg border border-black/10 bg-white px-3 py-1.5 text-sm text-black dark:border-white/10 dark:bg-black dark:text-white"
+          >
+            {METRICS.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+
+          <label className="flex items-center gap-2 text-sm">
+            From
+            <input type="date" value={from} max={to || undefined} onChange={(e) => onFromChange(e.target.value)} className={INPUT_CLASS} />
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            To
+            <input type="date" value={to} min={from || undefined} onChange={(e) => onToChange(e.target.value)} className={INPUT_CLASS} />
+          </label>
+          {(from || to) && (
+            <button
+              type="button"
+              onClick={() => {
+                onFromChange("");
+                onToChange("");
+              }}
+              className="text-sm underline text-black/60 dark:text-white/60"
+            >
+              Clear dates
+            </button>
+          )}
+        </div>
 
         <button
           type="button"
@@ -49,7 +84,7 @@ export default function GraphControls() {
           value={targetDate}
           onChange={(e) => setTargetDate(e.target.value)}
           disabled={!predictFuture}
-          className="rounded-lg border border-black/10 bg-transparent px-3 py-1.5 text-sm disabled:opacity-40 dark:border-white/10"
+          className={`${INPUT_CLASS} disabled:opacity-40`}
         />
 
         <input
@@ -61,7 +96,7 @@ export default function GraphControls() {
           max={299.9}
           step={0.1}
           placeholder="Bodyweight (kg)"
-          className="rounded-lg border border-black/10 bg-transparent px-3 py-1.5 text-sm disabled:opacity-40 dark:border-white/10"
+          className={`${INPUT_CLASS} disabled:opacity-40`}
         />
       </div>
     </div>
