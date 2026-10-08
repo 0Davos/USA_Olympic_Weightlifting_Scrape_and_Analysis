@@ -18,6 +18,7 @@ from lightgbm import LGBMRegressor
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 FEATURES_CSV_PATH = os.path.join(SCRIPT_DIR, "..", "data", "meet_results_FEATURES.csv")
 SAVED_MODELS_DIR = os.path.join(SCRIPT_DIR, "saved")
+SERVING_MODELS_DIR = os.path.join(SCRIPT_DIR, "..", "app", "api", "_models")
 
 FEATURE_COLS = [
     'Bodyweight',
@@ -160,6 +161,18 @@ def save_quantile_models(quantile_models, output_dir=SAVED_MODELS_DIR):
         filepath = os.path.join(output_dir, filename)
         joblib.dump(estimator, filepath)
         print(f"Saved quantile {q:.2f} model to {filepath}")
+        save_serving_model(estimator, q)
+
+
+def save_serving_model(estimator, q, output_dir=SERVING_MODELS_DIR):
+    """Writes the model in LightGBM's native text format for the website's API. Unlike the
+    joblib pickle, a native booster loads with lightgbm.Booster alone - no scikit-learn - which
+    keeps the deployed function under Vercel's size limit. Lives under app/ because that is the
+    only part of the repo the website deploys."""
+    os.makedirs(output_dir, exist_ok=True)
+    filepath = os.path.join(output_dir, f"lightgbm_q{round(q * 100)}.txt")
+    estimator.booster_.save_model(filepath)
+    print(f"Saved quantile {q:.2f} serving model to {filepath}")
 
 
 def tune_lightgbm_quantiles(df):
