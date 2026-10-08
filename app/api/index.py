@@ -3,7 +3,7 @@ import os
 import re
 from collections import Counter
 from contextlib import closing
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -24,6 +24,12 @@ logger = logging.getLogger(__name__)
 app = FastAPI()
 
 SEARCH_LIMIT = 10
+
+# The models only learned "next meet given history", so a far-future date returns something
+# meaningless; the limit is also shown in the UI.
+MAX_PREDICT_DAYS_AHEAD = 365
+# Same range the page's bodyweight input allows.
+MIN_BODYWEIGHT, MAX_BODYWEIGHT = 0.1, 299.9
 
 # Athletes are identified by name only, and the source has spelling noise (stray double
 # spaces, inconsistent capitalisation), so both endpoints match on a normalized key:
@@ -70,6 +76,12 @@ def to_json_row(row: dict) -> dict:
             value = value.isoformat()
         out[key] = value
     return out
+
+
+def pick_display_name(rows: list[dict]) -> str:
+    """The most common cleaned-up spelling among an athlete's rows (ties: alphabetical)."""
+    spellings = Counter(r["name"] for r in rows)
+    return sorted(spellings, key=lambda s: (-spellings[s], s))[0]
 
 
 @app.get("/api/health")
@@ -128,7 +140,79 @@ def ath_indv_find(name: str = Query(..., min_length=1, max_length=150)):
     if not rows:
         raise HTTPException(status_code=404, detail="Athlete not found")
 
-    spellings = Counter(r["name"] for r in rows)
-    display_name = sorted(spellings, key=lambda s: (-spellings[s], s))[0]
     results = [to_json_row({k: v for k, v in r.items() if k != "name"}) for r in rows]
-    return {"name": display_name, "count": len(results), "results": results}
+    return {"name": pick_display_name(rows), "count": len(results), "results": results}
+
+
+@app.get("/api/athletes/predict")
+def ath_predict(
+    name: str = Query(..., min_length=1, max_length=150),
+    target_date: date = Query(..., alias="date"),
+    bodyweight: float = Query(..., ge=MIN_BODYWEIGHT, le=MAX_BODYWEIGHT),
+):
+    """Predicted total (kg) for the athlete's next meet on `date` at `bodyweight`, as the 25th, 50th,
+    75th and 99th percentile of what they might total. Built from their previous meets only, and
+    assumes no bomb-out (the models were trained without them). The date must be after their latest
+    meet and no more than 12 months from today."""
+    last_allowed = date.today() + timedelta(days=MAX_PREDICT_DAYS_AHEAD)
+    if target_date > last_allowed:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Predictions only go up to 12 months ahead (through {last_allowed.isoformat()}).",
+        )
+
+    key = normalize(name)
+    rows = run_query(
+        f"""
+        SELECT {NAME_DISPLAY_SQL} AS name, date, bodyweight, sn_1, sn_2, sn_3, cj_1, cj_2, cj_3,
+               best_sn, best_cj, total, bombed_out, gender
+        FROM meet_results
+        WHERE {NAME_KEY_SQL} = %s
+        ORDER BY date ASC NULLS LAST, meet, id
+        """,
+        (key,),
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Athlete not found")
+
+    # Decimal -> float; undated meets can't be placed in time, so they're left out.
+    history = [
+        {k: float(v) if isinstance(v, Decimal) else v for k, v in r.items() if k != "name"}
+        for r in rows
+        if r["date"] is not None
+    ]
+    if not history:
+        raise HTTPException(status_code=422, detail="This athlete has no dated meets to predict from.")
+
+    latest = history[-1]
+    if target_date <= latest["date"]:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Pick a date after this athlete's latest meet ({latest['date'].isoformat()}).",
+        )
+
+    try:
+        # Imported on first use: it pulls in lightgbm and scipy (seconds on a cold start), which
+        # search and history never need and shouldn't pay for.
+        from _prediction import predict_next_meet
+
+        predicted = predict_next_meet(history, target_date, bodyweight)
+    except Exception:
+        logger.exception("prediction failed")
+        raise HTTPException(status_code=503, detail="Prediction unavailable")
+
+    # The four models are independent, so their outputs can occasionally cross; keep the bands ordered.
+    q25, q50, q75, q99 = sorted(predicted.values())
+    return {
+        "name": pick_display_name(rows),
+        "date": target_date.isoformat(),
+        "bodyweight": bodyweight,
+        "latest_meet": {
+            "date": latest["date"].isoformat(),
+            "total": latest["total"],
+            "bombed_out": latest["bombed_out"],
+        },
+        "prediction": {"q25": round(q25, 1), "q50": round(q50, 1), "q75": round(q75, 1), "q99": round(q99, 1)},
+        "meets_used": len(history),
+        "assumes_no_bomb_out": True,
+    }
