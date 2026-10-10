@@ -1,4 +1,5 @@
-// Shapes and fetching for the athlete history endpoint (GET /api/athletes/history).
+// Shapes and fetching for the athlete history endpoint (GET /api/athletes/history) and the
+// prediction endpoint (GET /api/athletes/predict).
 
 export type Meet = {
   meet: string;
@@ -39,4 +40,57 @@ export async function fetchHistory(name: string, signal: AbortSignal): Promise<A
 export function filterByDateRange(results: Meet[], from: string, to: string): Meet[] {
   if (!from && !to) return results;
   return results.filter((r) => r.date && (!from || r.date >= from) && (!to || r.date <= to));
+}
+
+// ---- prediction
+
+// Keep in step with MAX_PREDICT_DAYS_AHEAD, MIN_BODYWEIGHT and MAX_BODYWEIGHT in app/api/index.py
+// (the API enforces them either way; these just let the page explain them before asking).
+export const MAX_PREDICT_DAYS_AHEAD = 365;
+export const MIN_BODYWEIGHT = 0.1;
+export const MAX_BODYWEIGHT = 299.9;
+
+export type Prediction = {
+  name: string;
+  date: string; // the meet date that was asked about
+  bodyweight: number;
+  latest_meet: { date: string; total: number | null; bombed_out: boolean };
+  prediction: { q25: number; q50: number; q75: number; q99: number };
+  meets_used: number;
+  assumes_no_bomb_out: boolean;
+};
+
+export type PredictionResult = { ok: true; data: Prediction } | { ok: false; message: string };
+
+// A rejected request (bad date, unknown athlete, ...) comes back as a message to show the user;
+// anything unexpected throws.
+export async function fetchPrediction(
+  name: string,
+  date: string,
+  bodyweight: number,
+  signal: AbortSignal,
+): Promise<PredictionResult> {
+  const params = new URLSearchParams({ name, date, bodyweight: String(bodyweight) });
+  const res = await fetch(`/api/athletes/predict?${params}`, { signal });
+  if (res.ok) return { ok: true, data: await res.json() };
+  if (res.status === 404 || res.status === 422) {
+    const body = await res.json().catch(() => null);
+    // 422 from FastAPI's own validation carries a list rather than a string
+    const message = typeof body?.detail === "string" ? body.detail : "Those values can't be used for a prediction.";
+    return { ok: false, message };
+  }
+  throw new Error(`prediction request failed: ${res.status}`);
+}
+
+export function todayISO(): string {
+  const n = new Date();
+  const pad = (v: number) => String(v).padStart(2, "0");
+  return `${n.getFullYear()}-${pad(n.getMonth() + 1)}-${pad(n.getDate())}`;
+}
+
+// Calendar-day arithmetic on "YYYY-MM-DD" strings, done in UTC so daylight saving can't shift a day.
+export function addDays(iso: string, days: number): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
 }
