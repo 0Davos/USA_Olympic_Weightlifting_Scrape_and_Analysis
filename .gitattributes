@@ -1,0 +1,4 @@
+# The prediction models are LightGBM text files that the API parses byte-for-byte. Git's autocrlf (on by
+# default for Git on Windows) rewrites line endings to CRLF on checkout, which LightGBM can't read -
+# it fails to load the model and can crash the whole process. Never convert them.
+app/api/_models/*.txt -text

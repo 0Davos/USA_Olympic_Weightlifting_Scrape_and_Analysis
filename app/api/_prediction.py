@@ -40,11 +40,18 @@ ATTEMPT_FIELDS = ("sn_1", "sn_2", "sn_3", "cj_1", "cj_2", "cj_3")
 _boosters = None
 
 
+def _load_booster(path: Path) -> "lgb.Booster":
+    # Read the model as text first: Python normalizes line endings on read, whereas handing LightGBM the
+    # file path directly means a copy that picked up Windows CRLF endings (git's autocrlf does this on
+    # checkout) fails to parse - and can crash the whole process, which no try/except can catch.
+    return lgb.Booster(model_str=path.read_text(encoding="utf-8"))
+
+
 def get_boosters():
     """Loads the four quantile models once per process (a warm serverless instance reuses them)."""
     global _boosters
     if _boosters is None:
-        _boosters = {q: lgb.Booster(model_file=str(MODELS_DIR / f"lightgbm_q{q}.txt")) for q in QUANTILES}
+        _boosters = {q: _load_booster(MODELS_DIR / f"lightgbm_q{q}.txt") for q in QUANTILES}
     return _boosters
 
 
