@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { SITE_NAME } from "@/lib/site";
 
 const DEBOUNCE_MS = 250;
 
@@ -93,7 +94,7 @@ export default function TopBar() {
     <header className="sticky top-0 z-50 border-b border-black/10 bg-white/90 backdrop-blur dark:border-white/10 dark:bg-black/90">
       <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-3">
         <Link href="/" className="text-lg font-semibold tracking-tight">
-          [Site Name]
+          {SITE_NAME}
         </Link>
 
         <div ref={containerRef} className="relative w-full max-w-xs">

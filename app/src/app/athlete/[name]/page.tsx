@@ -1,5 +1,13 @@
+import type { Metadata } from "next";
+import Link from "next/link";
 import TopBar from "@/components/TopBar";
 import AthleteView from "@/components/AthleteView";
+import { CONTACT_EMAIL } from "@/lib/site";
+
+export async function generateMetadata({ params }: PageProps<"/athlete/[name]">): Promise<Metadata> {
+  const { name } = await params;
+  return { title: decodeURIComponent(name) };
+}
 
 export default async function AthletePage({ params }: PageProps<"/athlete/[name]">) {
   const { name } = await params;
@@ -13,6 +21,20 @@ export default async function AthletePage({ params }: PageProps<"/athlete/[name]
         <h1 className="text-2xl font-semibold">{athleteName}</h1>
 
         <AthleteView name={athleteName} />
+
+        <p className="mt-10 text-xs leading-5 text-black/50 dark:text-white/50">
+          Results are matched by name only, so athletes who share a name may appear merged, and one athlete may
+          appear under different spellings. Estimates are statistical, not guarantees. To report an error or ask
+          for a result to be corrected or removed, email{" "}
+          <a href={`mailto:${CONTACT_EMAIL}`} className="underline">
+            {CONTACT_EMAIL}
+          </a>
+          . See the{" "}
+          <Link href="/privacy" className="underline">
+            Privacy Policy
+          </Link>
+          .
+        </p>
       </main>
     </div>
   );
