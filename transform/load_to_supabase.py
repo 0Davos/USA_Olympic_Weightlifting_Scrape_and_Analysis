@@ -12,6 +12,8 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 FEATURES_CSV_PATH = os.path.join(SCRIPT_DIR, "..", "data", "meet_results_FEATURES.csv")
 
 TABLE_NAME = "meet_results"
+# One-run-behind copy of the live table; transform/restore_from_backup.py puts it back by hand.
+BACKUP_TABLE_NAME = "meet_results_backup"
 
 # CSV column -> Supabase column. Renamed to clean SQL identifiers (lowercase,
 # underscores, no spaces/special characters) so future queries don't need to
@@ -40,6 +42,22 @@ COLUMN_MAP = {
 }
 
 
+def backup_live_table(conn, table=TABLE_NAME, backup=BACKUP_TABLE_NAME):
+    """Keeps the last known-good data: the run happening at all is evidence the previous load was
+    fine, so the live table is copied to the backup right before it gets replaced. Called inside the
+    same transaction as the reload, so a failed reload also rolls back the backup swap and leaves
+    both tables as they were. An empty live table never overwrites an existing backup.
+    Returns the number of rows backed up, or None if the live table was empty."""
+    live_rows = conn.execute(text(f'SELECT count(*) FROM "{table}"')).scalar()
+    if not live_rows:
+        print(f"Live table is empty - leaving '{backup}' as it is")
+        return None
+    conn.execute(text(f'DROP TABLE IF EXISTS "{backup}"'))
+    conn.execute(text(f'CREATE TABLE "{backup}" AS TABLE "{table}"'))
+    print(f"Backed up {live_rows} rows to '{backup}'")
+    return live_rows
+
+
 def load_to_supabase():
     db_url = os.environ.get("SUPABASE_DB_URL")
     if not db_url:
@@ -54,6 +72,9 @@ def load_to_supabase():
         # The table was created before bombed_out existed; to_sql(append) won't add
         # a missing column, so make sure it's there (no-op once it is).
         conn.execute(text(f'ALTER TABLE "{TABLE_NAME}" ADD COLUMN IF NOT EXISTS bombed_out boolean'))
+
+        backup_live_table(conn)
+
         conn.execute(text(f'TRUNCATE TABLE "{TABLE_NAME}"'))
         df.to_sql(TABLE_NAME, conn, if_exists='append', index=False, method='multi', chunksize=5000)
 
