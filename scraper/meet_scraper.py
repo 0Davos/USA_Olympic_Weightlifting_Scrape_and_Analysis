@@ -13,7 +13,6 @@ from dotenv import load_dotenv
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CSV_PATH = os.path.join(SCRIPT_DIR, "..", "data", "meet_results.csv")
-CLEANED_CSV_PATH = os.path.join(SCRIPT_DIR, "..", "data", "meet_results_CLEANED.csv")
 
 
 def parse_mixed_format_dates(date_series):
@@ -42,32 +41,23 @@ def normalize_date_key(date_str):
     return parsed.strftime('%Y-%m-%d')
 
 
-def get_scrape_date_range(csv_path, cleaned_csv_path=None):
-    """Start = the 1st of the month containing the most recent date in the
-    existing cleaned CSV (so any late-posted results from earlier in that
-    month aren't missed) - falls back to the raw CSV if the cleaned one
-    doesn't exist yet (e.g. before meet_clean.py has ever been run). End =
-    today.
+SCRAPE_LOOKBACK_MONTHS = 3
 
-    Reads the cleaned CSV rather than the raw one because meet_clean.py
-    normalizes Date to a single consistent format; the raw CSV will always
-    have a mix of formats (bulk-loaded historical data in US format vs. this
-    scraper's own ISO output - parse_mixed_format_dates handles that mix
-    regardless, but the cleaned CSV is the more trustworthy source for "what
-    have I already got")."""
-    if cleaned_csv_path and os.path.exists(cleaned_csv_path):
-        df = pd.read_csv(cleaned_csv_path)
-    else:
-        df = pd.read_csv(csv_path)
-    dates = parse_mixed_format_dates(df['Date'])
+
+def get_scrape_date_range():
+    """Start = SCRAPE_LOOKBACK_MONTHS months before today, End = today.
+
+    A fixed rolling window instead of "where the existing data stops". The old
+    approach (start at the 1st of the month of the newest date already in the
+    CSV) broke in two ways: future-dated rows from the source (e.g. a multi-
+    week online meet dated past today) pushed the start date past meets that
+    had not been scraped yet, and the cleaned CSV it read is only rebuilt on
+    the user's machine, so an unattended weekly run could not rely on it to
+    advance. Re-scraping the window each run costs time only: rows already in
+    meet_results.csv are skipped by the (Meet, Date, Name, Bodyweight)
+    dedup."""
     end_date = datetime.now()
-    # Capped at today: the source occasionally has future-dated rows (e.g. a
-    # multi-week online meet with per-athlete dates past today), which would
-    # otherwise push start_date past end_date.
-    most_recent = min(dates.max(), pd.Timestamp(end_date))
-
-    start_date = most_recent.replace(day=1)
-
+    start_date = end_date - pd.DateOffset(months=SCRAPE_LOOKBACK_MONTHS)
     return start_date, end_date
 
 
@@ -97,7 +87,7 @@ def scrape_meets():
         start_date = datetime(2025, 1, 1)
         end_date = datetime.now()
     else:
-        start_date, end_date = get_scrape_date_range(CSV_PATH, CLEANED_CSV_PATH)
+        start_date, end_date = get_scrape_date_range()
 
     url = build_results_url(start_date, end_date)
     print(f"Scraping date range: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
