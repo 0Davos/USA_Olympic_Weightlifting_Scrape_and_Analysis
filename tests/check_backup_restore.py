@@ -70,6 +70,8 @@ try:
     # ---- backup
     got = L.backup_live_table(conn, "t_live", "t_backup")
     check("backup copies every live row", got == 500 and n("t_backup") == 500 and same_rows("t_live", "t_backup"))
+    rls = conn.execute(text("SELECT relrowsecurity FROM pg_class WHERE oid = to_regclass('\"t_backup\"')")).scalar()
+    check("the backup table has row-level security on (so Supabase's public roles can't touch it)", rls is True)
     got = L.backup_live_table(conn, "t_empty", "t_backup")
     check("an EMPTY live table does not overwrite the backup", got is None and n("t_backup") == 500)
     conn.execute(text("DELETE FROM t_live WHERE id IN (SELECT id FROM t_live ORDER BY id LIMIT 50)"))

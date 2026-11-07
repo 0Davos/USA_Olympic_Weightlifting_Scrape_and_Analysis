@@ -54,6 +54,10 @@ def backup_live_table(conn, table=TABLE_NAME, backup=BACKUP_TABLE_NAME):
         return None
     conn.execute(text(f'DROP TABLE IF EXISTS "{backup}"'))
     conn.execute(text(f'CREATE TABLE "{backup}" AS TABLE "{table}"'))
+    # Supabase gives every new table full privileges for its public 'anon'/'authenticated' roles (the
+    # REST API's roles). With row-level security on and no policies they can see and change nothing;
+    # this connection is the table's owner, which bypasses it.
+    conn.execute(text(f'ALTER TABLE "{backup}" ENABLE ROW LEVEL SECURITY'))
     print(f"Backed up {live_rows} rows to '{backup}'")
     return live_rows
 
