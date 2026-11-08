@@ -6,7 +6,6 @@ import {
   ATHLETE_STYLES,
   fetchHistory,
   fetchPrediction,
-  filterByDateRange,
   lastBodyweight,
   MAX_COMPARED,
   MAX_PREDICT_DAYS_AHEAD,
@@ -53,8 +52,6 @@ export default function AthleteView({ name }: { name: string }) {
   const [attempt, setAttempt] = useState(0);
   const [load, setLoad] = useState<Load | null>(null);
   const [metric, setMetric] = useState<Metric>("Total");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
 
   // Predictions: one per athlete on the graph, each with its own date (the athlete's last bodyweight is
   // used automatically). Dates the user hasn't touched use the default (see defaultDate).
@@ -110,10 +107,8 @@ export default function AthleteView({ name }: { name: string }) {
 
   const current = load && load.key === key ? load : null;
   const history = current?.status === "ready" ? current.data : null;
-  const rows = useMemo(
-    () => (history ? filterByDateRange(history.results, from, to) : []),
-    [history, from, to],
-  );
+  // The whole history: the athlete page no longer has a date range filter (removed 2026-11-08).
+  const rows = useMemo(() => history?.results ?? [], [history]);
 
   const [today] = useState(todayISO); // fixed at mount; the API enforces the real limit anyway
   const maxDate = addDays(today, MAX_PREDICT_DAYS_AHEAD);
@@ -220,12 +215,9 @@ export default function AthleteView({ name }: { name: string }) {
     if (predictOn && predictAvailable && e.history) {
       if (p.bodyweight == null) message = { tone: "error", text: "No bodyweight on record to predict from." };
       else if (!p.dateValid) message = { tone: "error", text: `Pick a date between ${p.minDate} and ${maxDate}.` };
-      else if (!answered) message = { tone: "info", text: "Predicting..." };
-      else if (!answered.ok) message = { tone: "error", text: answered.message };
-      else {
-        const n = answered.data.meets_used;
-        message = { tone: "info", text: `From ${n} meet${n === 1 ? "" : "s"}, at their last bodyweight (${p.bodyweight} kg).` };
-      }
+      else if (answered && !answered.ok) message = { tone: "error", text: answered.message };
+      // (Only problems are shown under the date; that predictions use the last bodyweight is a note at the
+      // bottom of the page.)
     }
     return {
       id: e.id,
@@ -243,7 +235,7 @@ export default function AthleteView({ name }: { name: string }) {
 
   const series: GraphSeries[] = plans.flatMap((p) =>
     p.entry.history
-      ? [{ name: p.entry.name, rows: p.entry.id === MAIN_ID ? rows : filterByDateRange(p.entry.history.results, from, to), ...p.entry.style }]
+      ? [{ name: p.entry.name, rows: p.entry.history.results, ...p.entry.style }]
       : [],
   );
 
@@ -288,10 +280,6 @@ export default function AthleteView({ name }: { name: string }) {
         <GraphControls
           metric={metric}
           onMetricChange={setMetric}
-          from={from}
-          to={to}
-          onFromChange={setFrom}
-          onToChange={setTo}
           predictOn={predictOn}
           onPredictToggle={setPredictOn}
           predictAvailable={predictAvailable}

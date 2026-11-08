@@ -24,7 +24,8 @@ export default async function AthletePage({ params }: PageProps<"/athlete/[name]
 
         <p className="mt-10 text-xs leading-5 text-black/50 dark:text-white/50">
           Results are matched by name only, so athletes who share a name may appear merged, and one athlete may
-          appear under different spellings. Estimates are statistical, not guarantees. To report an error or ask
+          appear under different spellings. Estimates are statistical, not guarantees, and are made at each
+          athlete&apos;s last recorded bodyweight. To report an error or ask
           for a result to be corrected or removed, email{" "}
           <a href={`mailto:${CONTACT_EMAIL}`} className="underline">
             {CONTACT_EMAIL}

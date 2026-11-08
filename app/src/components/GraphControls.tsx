@@ -22,10 +22,6 @@ export type AthleteColumn = {
 type Props = {
   metric: Metric;
   onMetricChange: (metric: Metric) => void;
-  from: string;
-  to: string;
-  onFromChange: (from: string) => void;
-  onToChange: (to: string) => void;
   predictOn: boolean;
   onPredictToggle: (on: boolean) => void;
   predictAvailable: boolean; // false on the Sn and Cj views: the models only predict Total
@@ -51,10 +47,6 @@ function ChipMarker({ color, shape }: { color: string; shape: MarkerShape }) {
 export default function GraphControls({
   metric,
   onMetricChange,
-  from,
-  to,
-  onFromChange,
-  onToChange,
   predictOn,
   onPredictToggle,
   predictAvailable,
@@ -85,26 +77,6 @@ export default function GraphControls({
             ))}
           </select>
 
-          <label className="flex items-center gap-2 text-sm">
-            From
-            <input type="date" value={from} max={to || undefined} onChange={(e) => onFromChange(e.target.value)} className={INPUT_CLASS} />
-          </label>
-          <label className="flex items-center gap-2 text-sm">
-            To
-            <input type="date" value={to} min={from || undefined} onChange={(e) => onToChange(e.target.value)} className={INPUT_CLASS} />
-          </label>
-          {(from || to) && (
-            <button
-              type="button"
-              onClick={() => {
-                onFromChange("");
-                onToChange("");
-              }}
-              className="text-sm underline text-black/60 dark:text-white/60"
-            >
-              Clear dates
-            </button>
-          )}
         </div>
 
         <button
@@ -197,8 +169,7 @@ export default function GraphControls({
         )}
         {predictOn && predictAvailable && (
           <p className="text-xs text-black/50 dark:text-white/50">
-            Predictions go up to 12 months ahead (through {maxDate}), use each athlete&apos;s last bodyweight, and
-            assume no bomb-out.
+            Predictions go up to 12 months ahead (through {maxDate}) and assume no bomb-out.
           </p>
         )}
       </div>
