@@ -114,21 +114,23 @@ export default function AthleteStatsCharts() {
           How many meets each athlete has attended, all time (bomb-outs included).{" "}
           <span className={more ? "" : "invisible"}>
             Plus {more ? more.athletes.toLocaleString() : "000"} athletes with more than 30
-            {more?.most && (
+            {more?.most ? (
+              // "...; the most is 109 meets from Seth Tom!" (wording requested 2026-11-08)
               <>
-                {" "}(the most: {more.most}!
+                ; the most is {more.most} meets
                 {more.most_name && (
                   <>
-                    {" "}
+                    {" "}from{" "}
                     <Link href={`/athlete/${encodeURIComponent(more.most_name)}`} className="underline hover:text-black dark:hover:text-white">
                       {more.most_name}
                     </Link>
                   </>
                 )}
-                )
+                !
               </>
+            ) : (
+              "."
             )}
-            .
           </span>
         </p>
         <div className={`mt-3 ${failed ? "invisible" : ""}`}>
