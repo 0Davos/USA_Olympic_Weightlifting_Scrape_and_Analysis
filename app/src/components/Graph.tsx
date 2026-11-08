@@ -42,19 +42,29 @@ const X_PADDING_MS = 30 * DAY_MS; // keeps a lone point (and the end points) off
 const ZOOM_WINDOW_MS = 365 * DAY_MS;
 const DOT_COLOR = "#2563eb";
 
-// The prediction bands, outermost first: each runs between two neighbouring percentiles.
+// The prediction bands, top to bottom: each runs between two neighbouring percentiles, and they mirror
+// each other around the median (the same colour the same distance out on either side).
+const RED = "#ef4444";
+const ORANGE = "#f97316";
 const BANDS: { label: string; color: string; lo: Quantile; hi: Quantile }[] = [
-  { label: "75th–99th percentile", color: "#ef4444", lo: "q75", hi: "q99" },
-  { label: "50th–75th percentile", color: "#f97316", lo: "q50", hi: "q75" },
-  { label: "25th–50th percentile", color: "#eab308", lo: "q25", hi: "q50" },
+  { label: "75th–99th percentile", color: RED, lo: "q75", hi: "q99" },
+  { label: "50th–75th percentile", color: ORANGE, lo: "q50", hi: "q75" },
+  { label: "25th–50th percentile", color: ORANGE, lo: "q25", hi: "q50" },
+  { label: "1st–25th percentile", color: RED, lo: "q1", hi: "q25" },
 ];
-const BAND_OPACITY = 0.6; // lower, and the three colours blur together on the dark theme
-// One dot per band edge, coloured like the band it tops (the 25th is the yellow band's floor).
+// The colour key: one entry per colour, since each colour appears once above the median and once below.
+const BAND_KEY = [
+  { label: "1st–25th / 75th–99th", color: RED },
+  { label: "25th–75th", color: ORANGE },
+];
+const BAND_OPACITY = 0.6; // lower, and the colours blur together on the dark theme
+// One dot per band edge, coloured like the band between it and the median.
 const EDGE_DOTS: { q: Quantile; color: string }[] = [
-  { q: "q99", color: BANDS[0].color },
-  { q: "q75", color: BANDS[1].color },
-  { q: "q50", color: BANDS[2].color },
-  { q: "q25", color: BANDS[2].color },
+  { q: "q99", color: RED },
+  { q: "q75", color: ORANGE },
+  { q: "q50", color: ORANGE },
+  { q: "q25", color: ORANGE },
+  { q: "q1", color: RED },
 ];
 
 function Swatch({ color }: { color: string }) {
@@ -67,7 +77,8 @@ function formatTick(t: number) {
 }
 
 // The bands (BANDS): shaded fans that start at one point (the latest meet's total) and widen out to
-// the chosen date; the dashed line is the median. Drawn with the chart's own axis scales so they stay
+// the chosen date; the dotted white line is the median (it always runs between the two orange bands, so
+// white shows on both themes). Drawn with the chart's own axis scales so they stay
 // aligned with the dots.
 function PredictionBands({ prediction, originTotal }: { prediction: Prediction; originTotal: number }) {
   const xScale = useXAxisScale();
@@ -91,7 +102,7 @@ function PredictionBands({ prediction, originTotal }: { prediction: Prediction; 
           fillOpacity={BAND_OPACITY}
         />
       ))}
-      <line x1={x0} y1={origin} x2={x1} y2={y(q.q50)} stroke="currentColor" strokeWidth={1.5} strokeDasharray="5 4" />
+      <line x1={x0} y1={origin} x2={x1} y2={y(q.q50)} stroke="white" strokeWidth={2} strokeDasharray="0.1 4" strokeLinecap="round" />
     </g>
   );
 }
@@ -184,7 +195,7 @@ export default function Graph({
     const windowStart = Date.parse(prediction.latest_meet.date) - ZOOM_WINDOW_MS;
     plotted = points.filter((p) => p.t >= windowStart && !p.bombedOut);
     const q = prediction.prediction;
-    const values = [...plotted.map((p) => p.value), originTotal, q.q25, q.q99];
+    const values = [...plotted.map((p) => p.value), originTotal, q.q1, q.q99];
     const min = Math.min(...values) - 2;
     const max = Math.max(...values) + 2;
     const step = [5, 10, 20, 25, 50, 100].find((s) => (max - min) / s <= 6) ?? 100;
@@ -200,14 +211,16 @@ export default function Graph({
     <div>
       {showPrediction && (
         <p className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-black/60 dark:text-white/60">
-          {BANDS.map((b) => (
+          {BAND_KEY.map((b) => (
             <span key={b.label} className="flex items-center gap-1">
               <Swatch color={b.color} />
-              {b.label}
+              {b.label} percentile
             </span>
           ))}
           <span className="flex items-center gap-1">
-            <span className="inline-block w-3 border-t-2 border-dashed border-current" />
+            <span className="inline-flex h-2 w-4 items-center rounded-sm px-0.5" style={{ backgroundColor: ORANGE }}>
+              <span className="w-full border-t-2 border-dotted border-white" />
+            </span>
             median
           </span>
           <span className="text-black/45 dark:text-white/45">Zoomed to the 12 months before the latest meet; bomb-outs hidden</span>

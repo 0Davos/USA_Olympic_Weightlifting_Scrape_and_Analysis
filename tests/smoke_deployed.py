@@ -86,7 +86,7 @@ if dated:
     target = max(date.today(), latest) + timedelta(days=60)
     status, body, secs = fetch("/api/athletes/predict", name=name, date=target.isoformat(), bodyweight=80)
     p = body.get("prediction", {}) if isinstance(body, dict) else {}
-    ordered = bool(p) and p["q25"] <= p["q50"] <= p["q75"] <= p["q99"]
+    ordered = bool(p) and all(k in p for k in ("q1", "q25", "q50", "q75", "q99")) and list(p.values()) == sorted(p.values())
     check(f"prediction for {name!r} works, with ordered bands", status == 200 and ordered, f"{status}, {secs:.1f}s, {p}")
     status, body, _ = fetch("/api/athletes/predict", name=name, date=(date.today() + timedelta(days=400)).isoformat(), bodyweight=80)
     check("a date more than 12 months away is rejected with a message", status == 422 and "12 months" in str(body), str(status))

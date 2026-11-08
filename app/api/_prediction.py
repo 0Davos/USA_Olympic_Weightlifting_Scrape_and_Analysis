@@ -31,7 +31,7 @@ FEATURE_COLS = [
 ]
 
 MODELS_DIR = Path(__file__).resolve().parent / "_models"
-QUANTILES = (25, 50, 75, 99)
+QUANTILES = (1, 25, 50, 75, 99)
 
 NAN = float("nan")
 ATTEMPT_FIELDS = ("sn_1", "sn_2", "sn_3", "cj_1", "cj_2", "cj_3")
@@ -234,7 +234,7 @@ def next_meet_features(history: list[dict], target_date, target_bodyweight: floa
 
 
 def predict_next_meet(history: list[dict], target_date, target_bodyweight: float) -> dict[str, float]:
-    """Predicted total (kg) at the 25th / 50th / 75th / 99th percentile for the meet described."""
+    """Predicted total (kg) at each percentile in QUANTILES for the meet described, keyed "q1" ... "q99"."""
     features = next_meet_features(history, target_date, target_bodyweight)
     x = [0.0 if v is None or math.isnan(v) else float(v) for v in features]  # training filled NaN with 0
     return {f"q{q}": model.predict_one(x) for q, model in get_boosters().items()}

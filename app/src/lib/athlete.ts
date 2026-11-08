@@ -55,7 +55,7 @@ export type Prediction = {
   date: string; // the meet date that was asked about
   bodyweight: number;
   latest_meet: { date: string; total: number | null; bombed_out: boolean };
-  prediction: { q25: number; q50: number; q75: number; q99: number };
+  prediction: { q1: number; q25: number; q50: number; q75: number; q99: number };
   meets_used: number;
   assumes_no_bomb_out: boolean;
 };

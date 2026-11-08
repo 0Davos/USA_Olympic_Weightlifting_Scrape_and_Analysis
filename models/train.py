@@ -55,7 +55,9 @@ CATBOOST_PARAM_GRID = {
     'l2_leaf_reg': [1, 3, 5, 7, 9],
 }
 
-QUANTILES = [0.25, 0.50, 0.75, 0.99]
+# The website draws bands between neighbouring quantiles, mirrored around the median (1st-25th-50th
+# below it, 50th-75th-99th above). The 1st was added 2026-11-08 to the original four.
+QUANTILES = [0.01, 0.25, 0.50, 0.75, 0.99]
 
 
 def prepare_train_test(df):
@@ -175,8 +177,8 @@ def save_serving_model(estimator, q, output_dir=SERVING_MODELS_DIR):
     print(f"Saved quantile {q:.2f} serving model to {filepath}")
 
 
-def tune_lightgbm_quantiles(df):
-    """Tunes one LightGBM model per quantile in QUANTILES (25th/50th/75th/99th) via
+def tune_lightgbm_quantiles(df, quantiles=QUANTILES):
+    """Tunes one LightGBM model per quantile in `quantiles` (default: all of QUANTILES) via
     RandomizedSearchCV. Scored on pinball loss at that quantile's specific alpha,
     not MAE - MAE would push hyperparameters toward minimizing average error, which
     fights against what a quantile model (other than roughly the median) is actually
@@ -190,7 +192,7 @@ def tune_lightgbm_quantiles(df):
     train, test, X_train, X_test, y_train, y_test = prepare_train_test(df)
 
     quantile_models = {}
-    for q in QUANTILES:
+    for q in quantiles:
         print(f"\nTuning LightGBM quantile model for q={q}...")
         pinball_scorer = make_scorer(mean_pinball_loss, alpha=q, greater_is_better=False)
 
