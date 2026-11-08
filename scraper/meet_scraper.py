@@ -3,6 +3,7 @@ Owen Davis
 Meet Scraping Script
 '''
 import os
+import argparse
 import base64
 import json
 from datetime import datetime
@@ -70,7 +71,36 @@ def build_results_url(start_date, end_date):
     return f"https://usaweightlifting.sport80.com/v/1023105/r/results?filters={encoded}"
 
 
-def scrape_meets():
+CODE_WAIT_SECONDS = 300
+CODE_POLL_SECONDS = 2
+
+
+def get_security_code(code_file=None, timeout_seconds=CODE_WAIT_SECONDS, poll_seconds=CODE_POLL_SECONDS):
+    """Returns the 2FA code. With no code_file, asks on the terminal with
+    input() (the normal, manual run). With a code_file, an unattended run
+    polls that file until it holds a code (the last non-empty line wins),
+    clears the file so the code can't be reused, and returns it; raises
+    TimeoutError if none arrives within timeout_seconds. The file is read as
+    utf-8-sig so a byte-order mark added by Windows PowerShell is ignored. The
+    caller should empty the file before the run, or a stale code left from the
+    previous run would be used first."""
+    if not code_file:
+        return input("Give us the security code :")
+
+    print(f"Waiting up to {timeout_seconds}s for the code in {code_file}...")
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        if os.path.exists(code_file):
+            with open(code_file, encoding="utf-8-sig") as f:
+                lines = [line.strip() for line in f.read().splitlines() if line.strip()]
+            if lines:
+                open(code_file, "w").close()
+                return lines[-1]
+        time.sleep(poll_seconds)
+    raise TimeoutError(f"No security code appeared in {code_file} within {timeout_seconds}s")
+
+
+def scrape_meets(code_file=None):
     # --- ONE-TIME RECOVERY OVERRIDE ---
     # Manually scrapes from 2025-01-01 (the earliest date any incrementally-
     # scraped row could exist - the very first scraper run used a hardcoded
@@ -122,7 +152,7 @@ def scrape_meets():
             pass
         if page.locator("#deviceToken").count() > 0:
             print("Device confirmation required — waiting for code...")
-            security_code = input("Give us the security code :")
+            security_code = get_security_code(code_file)
 
             page.fill("#deviceToken", security_code)
             page.press("#deviceToken", "Enter")
@@ -399,12 +429,12 @@ def scrape_meets():
         # --------------------------
 
 
-def overall_try():
+def overall_try(code_file=None):
     '''
     Function which catches any exceptions, returns False if there are any, True otherwise (passed with no fails)
     '''
     try:
-        scrape_meets()
+        scrape_meets(code_file)
     except Exception as e:
         print(e)
         return False
@@ -414,9 +444,17 @@ if __name__ == '__main__':
     '''
     Loop to continously call until we succeed OR fail 10 times (don't want to exhaust)
     '''
+    parser = argparse.ArgumentParser(description="Scrape USAW meet results into data/meet_results.csv")
+    parser.add_argument(
+        "--code-file",
+        help="For unattended runs: read the 2FA code from this file instead of asking on the terminal "
+             "(empty the file before the run; it is cleared again once the code is read)",
+    )
+    args = parser.parse_args()
+
     num_times_failed = 0
     while True:
-        is_done = overall_try()
+        is_done = overall_try(args.code_file)
         if is_done == True:
             break
         num_times_failed += 1
