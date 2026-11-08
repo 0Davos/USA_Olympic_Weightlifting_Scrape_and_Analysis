@@ -11,7 +11,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { METRIC_FIELD, type GraphSeries, type MarkerShape, type Metric, type Prediction } from "@/lib/athlete";
+import { METRIC_FIELD, type GraphPrediction, type GraphSeries, type MarkerShape, type Metric, type Prediction } from "@/lib/athlete";
 
 type Point = {
   kind: "meet";
@@ -35,7 +35,7 @@ type PredictionPoint = {
   value: number;
   color: string;
   label: string; // which percentile this dot is, for its hover
-  prediction: Prediction;
+  athlete: string;
 };
 
 type Quantile = keyof Prediction["prediction"];
@@ -69,29 +69,26 @@ function MarkerIcon({ color, shape }: { color: string; shape: MarkerShape }) {
 }
 
 // The prediction bands, top to bottom: each runs between two neighbouring percentiles, and they mirror
-// each other around the median (the same colour the same distance out on either side).
-const RED = "#ef4444";
-const ORANGE = "#f97316";
-const BANDS: { label: string; color: string; lo: Quantile; hi: Quantile }[] = [
-  { label: "75th–99th percentile", color: RED, lo: "q75", hi: "q99" },
-  { label: "50th–75th percentile", color: ORANGE, lo: "q50", hi: "q75" },
-  { label: "25th–50th percentile", color: ORANGE, lo: "q25", hi: "q50" },
-  { label: "1st–25th percentile", color: RED, lo: "q1", hi: "q25" },
-];
-// The colour key: one entry per colour, since each colour appears once above the median and once below.
-const BAND_KEY = [
-  { label: "1st–25th / 75th–99th", color: RED },
-  { label: "25th–75th", color: ORANGE },
+// each other around the median - the athlete's darker colour on the outside, the lighter one inside
+// (bandOuter / bandInner in ATHLETE_STYLES).
+type BandTone = "outer" | "inner";
+const BANDS: { label: string; tone: BandTone; lo: Quantile; hi: Quantile }[] = [
+  { label: "75th–99th percentile", tone: "outer", lo: "q75", hi: "q99" },
+  { label: "50th–75th percentile", tone: "inner", lo: "q50", hi: "q75" },
+  { label: "25th–50th percentile", tone: "inner", lo: "q25", hi: "q50" },
+  { label: "1st–25th percentile", tone: "outer", lo: "q1", hi: "q25" },
 ];
 const BAND_OPACITY = 0.6; // lower, and the colours blur together on the dark theme
+const BAND_OPACITY_MANY = 0.45; // several athletes' bands can overlap
 // One dot per band edge, coloured like the band between it and the median.
-const EDGE_DOTS: { q: Quantile; color: string; label: string }[] = [
-  { q: "q99", color: RED, label: "99th percentile" },
-  { q: "q75", color: ORANGE, label: "75th percentile" },
-  { q: "q50", color: ORANGE, label: "Median (50th percentile)" },
-  { q: "q25", color: ORANGE, label: "25th percentile" },
-  { q: "q1", color: RED, label: "1st percentile" },
+const EDGE_DOTS: { q: Quantile; tone: BandTone; label: string }[] = [
+  { q: "q99", tone: "outer", label: "99th percentile" },
+  { q: "q75", tone: "inner", label: "75th percentile" },
+  { q: "q50", tone: "inner", label: "Median (50th percentile)" },
+  { q: "q25", tone: "inner", label: "25th percentile" },
+  { q: "q1", tone: "outer", label: "1st percentile" },
 ];
+const toneColor = (p: GraphPrediction, tone: BandTone) => (tone === "outer" ? p.bandOuter : p.bandInner);
 
 function Swatch({ color }: { color: string }) {
   return <span className="inline-block h-2 w-3 shrink-0 rounded-sm" style={{ backgroundColor: color }} />;
@@ -102,20 +99,19 @@ function formatTick(t: number) {
   return new Date(t).toLocaleDateString(undefined, { month: "short", year: "numeric", timeZone: "UTC" });
 }
 
-// The bands (BANDS): shaded fans that start at one point (the latest meet's total) and widen out to
-// the chosen date; the dotted white line is the median (it always runs between the two orange bands, so
-// white shows on both themes). Drawn with the chart's own axis scales so they stay
-// aligned with the dots.
-function PredictionBands({ prediction, originTotal }: { prediction: Prediction; originTotal: number }) {
+// One athlete's bands (BANDS): shaded fans that start at one point (their latest meet's total) and widen
+// out to the chosen date; the dotted white line is the median (it runs between the two inner bands, so
+// white shows on both themes). Drawn with the chart's own axis scales so they stay aligned with the dots.
+function PredictionBands({ p, opacity }: { p: GraphPrediction; opacity: number }) {
   const xScale = useXAxisScale();
   const yScale = useYAxisScale();
   if (!xScale || !yScale) return null;
 
-  const x0 = xScale(Date.parse(prediction.latest_meet.date)) as number;
-  const x1 = xScale(Date.parse(prediction.date)) as number;
+  const x0 = xScale(Date.parse(p.prediction.latest_meet.date)) as number;
+  const x1 = xScale(Date.parse(p.prediction.date)) as number;
   const y = (v: number) => yScale(v) as number;
-  const origin = y(originTotal);
-  const q = prediction.prediction;
+  const origin = y(p.originTotal);
+  const q = p.prediction.prediction;
   if ([x0, x1, origin].some((v) => !Number.isFinite(v))) return null;
 
   return (
@@ -124,8 +120,8 @@ function PredictionBands({ prediction, originTotal }: { prediction: Prediction; 
         <polygon
           key={b.label}
           points={`${x0},${origin} ${x1},${y(q[b.hi])} ${x1},${y(q[b.lo])}`}
-          fill={b.color}
-          fillOpacity={BAND_OPACITY}
+          fill={toneColor(p, b.tone)}
+          fillOpacity={opacity}
         />
       ))}
       <line x1={x0} y1={origin} x2={x1} y2={y(q.q50)} stroke="white" strokeWidth={2} strokeDasharray="0.1 4" strokeLinecap="round" />
@@ -151,11 +147,14 @@ function ChartTooltip({
 
   if (p.kind === "prediction") {
     if (p.hidden) return null;
-    // Each dot shows only its own percentile.
+    // Each dot shows only its own percentile (and, when comparing, whose prediction it is).
     return (
-      <div className={`${box} flex items-center gap-1.5`}>
-        <Swatch color={p.color} />
-        {p.label}: <span className="font-medium">{p.value} kg</span>
+      <div className={box}>
+        {showAthlete && <div className="mb-0.5 font-semibold">{p.athlete}</div>}
+        <div className="flex items-center gap-1.5">
+          <Swatch color={p.color} />
+          {p.label}: <span className="font-medium">{p.value} kg</span>
+        </div>
       </div>
     );
   }
@@ -181,17 +180,13 @@ function ChartTooltip({
 export default function Graph({
   series,
   metric,
-  prediction,
-  originTotal,
+  predictions,
 }: {
   // The page's athlete first, then any compared athletes, each with its colour and marker shape.
   series: GraphSeries[];
   metric: Metric;
-  // The page's athlete only. Only passed for the Total graph; null when prediction is off, invalid, or
-  // still loading.
-  prediction: Prediction | null;
-  // Where the bands start: the athlete's latest meet total (their last real total if that meet was a bomb-out).
-  originTotal: number | null;
+  // One per athlete with an answered prediction (Total graph only; empty when prediction is off).
+  predictions: GraphPrediction[];
 }) {
   const field = METRIC_FIELD[metric];
   const comparing = series.length > 1;
@@ -214,36 +209,36 @@ export default function Graph({
   );
   const anyPoints = pointsBySeries.some((p) => p.length > 0);
 
-  const showPrediction = prediction !== null && originTotal !== null;
-  const predictionPoints: PredictionPoint[] =
-    showPrediction
-      ? [
-          { kind: "prediction", hidden: true, t: Date.parse(prediction.latest_meet.date), value: originTotal, color: "", label: "", prediction },
-          ...EDGE_DOTS.map((d) => ({
-            kind: "prediction" as const,
-            hidden: false,
-            t: Date.parse(prediction.date),
-            value: prediction.prediction[d.q],
-            color: d.color,
-            label: d.label,
-            prediction,
-          })),
-        ]
-      : [];
+  const showPrediction = predictions.length > 0;
+  // Per prediction: a hidden point at its starting meet (so the x-axis always includes it) and a dot at
+  // each band edge.
+  const predictionPoints: PredictionPoint[] = predictions.flatMap((p) => [
+    { kind: "prediction" as const, hidden: true, t: Date.parse(p.prediction.latest_meet.date), value: p.originTotal, color: "", label: "", athlete: p.name },
+    ...EDGE_DOTS.map((d) => ({
+      kind: "prediction" as const,
+      hidden: false,
+      t: Date.parse(p.prediction.date),
+      value: p.prediction.prediction[d.q],
+      color: toneColor(p, d.tone),
+      label: d.label,
+      athlete: p.name,
+    })),
+  ]);
 
   // While a prediction is shown the graph zooms in on it, or the bands would be a sliver of a whole
-  // career: only the 12 months before the latest meet are plotted (inside whatever date range is set),
-  // bomb-outs are left out so the y-axis needn't reach 0, and the y-axis fits those meets and the bands.
-  // Otherwise the y-axis starts at 0.
-  // (Compared athletes are zoomed the same way, to the same window.)
+  // career: only the 12 months before the (earliest predicted athlete's) latest meet are plotted (inside
+  // whatever date range is set), bomb-outs are left out so the y-axis needn't reach 0, and the y-axis fits
+  // those meets and every athlete's bands. Otherwise the y-axis starts at 0.
   let plotted = pointsBySeries;
   let yDomain: [number, number | ((max: number) => number)] = [0, (max: number) => Math.ceil(max / 10) * 10];
   let yTicks: number[] | undefined; // round-number ticks for the zoomed axis (Recharts' own land on e.g. 329, 338)
   if (showPrediction) {
-    const windowStart = Date.parse(prediction.latest_meet.date) - ZOOM_WINDOW_MS;
+    const windowStart = Math.min(...predictions.map((p) => Date.parse(p.prediction.latest_meet.date))) - ZOOM_WINDOW_MS;
     plotted = pointsBySeries.map((pts) => pts.filter((p) => p.t >= windowStart && !p.bombedOut));
-    const q = prediction.prediction;
-    const values = [...plotted.flat().map((p) => p.value), originTotal, q.q1, q.q99];
+    const values = [
+      ...plotted.flat().map((p) => p.value),
+      ...predictions.flatMap((p) => [p.originTotal, p.prediction.prediction.q1, p.prediction.prediction.q99]),
+    ];
     const min = Math.min(...values) - 2;
     const max = Math.max(...values) + 2;
     const step = [5, 10, 20, 25, 50, 100].find((s) => (max - min) / s <= 6) ?? 100;
@@ -269,14 +264,17 @@ export default function Graph({
       )}
       {showPrediction && (
         <p className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-black/60 dark:text-white/60">
-          {BAND_KEY.map((b) => (
-            <span key={b.label} className="flex items-center gap-1">
-              <Swatch color={b.color} />
-              {b.label} percentile
-            </span>
-          ))}
+          {/* Each athlete's bands use their own colours: darker outside, lighter inside. */}
           <span className="flex items-center gap-1">
-            <span className="inline-flex h-2 w-4 items-center rounded-sm px-0.5" style={{ backgroundColor: ORANGE }}>
+            {predictions.map((p) => <Swatch key={p.name} color={p.bandOuter} />)}
+            1st–25th / 75th–99th percentile
+          </span>
+          <span className="flex items-center gap-1">
+            {predictions.map((p) => <Swatch key={p.name} color={p.bandInner} />)}
+            25th–75th
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="inline-flex h-2 w-4 items-center rounded-sm px-0.5" style={{ backgroundColor: predictions[0].bandInner }}>
               <span className="w-full border-t-2 border-dotted border-white" />
             </span>
             median
@@ -323,7 +321,9 @@ export default function Graph({
                   />
                 )}
               />
-              {showPrediction && <PredictionBands prediction={prediction} originTotal={originTotal} />}
+              {predictions.map((p) => (
+                <PredictionBands key={p.name} p={p} opacity={predictions.length > 1 ? BAND_OPACITY_MANY : BAND_OPACITY} />
+              ))}
               {/* zIndex puts the page's own athlete on top of compared ones (Recharts' default is 600). */}
               {plotted.map((pts, i) => {
                 const s = series[i];
