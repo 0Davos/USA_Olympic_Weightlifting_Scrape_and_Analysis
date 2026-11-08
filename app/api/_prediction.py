@@ -13,7 +13,6 @@ import math
 from datetime import date, datetime
 from pathlib import Path
 
-import lightgbm as lgb
 import numpy as np
 
 # Must equal FEATURE_COLS in models/train.py: the models take features positionally, by index.
@@ -39,12 +38,85 @@ ATTEMPT_FIELDS = ("sn_1", "sn_2", "sn_3", "cj_1", "cj_2", "cj_3")
 
 _boosters = None
 
+# LightGBM's kZeroThreshold: the float 1e-35, widened to a double.
+ZERO_THRESHOLD = 1.0000000180025095e-35
 
-def _load_booster(path: Path) -> "lgb.Booster":
-    # Read the model as text first: Python normalizes line endings on read, whereas handing LightGBM the
-    # file path directly means a copy that picked up Windows CRLF endings (git's autocrlf does this on
-    # checkout) fails to parse - and can crash the whole process, which no try/except can catch.
-    return lgb.Booster(model_str=path.read_text(encoding="utf-8"))
+
+class TreeModel:
+    """A LightGBM model read straight from its native text file (what models/train.py writes), so the
+    deployed API doesn't need the lightgbm package. That package's Linux build needs the system library
+    libgomp.so.1 (OpenMP), which Vercel's Python runtime doesn't provide - every prediction failed in
+    production until this replaced it.
+
+    Only what these models use is supported: one output, numerical splits with no special missing-value
+    handling (inputs are NaN-filled with 0 before predicting, as in training), no categorical splits, no
+    linear trees. Anything else is refused at load time rather than predicted wrongly - e.g. a future
+    retrain with a categorical feature would need support added here first.
+    tests/check_tree_model.py checks the predictions match the lightgbm package exactly.
+    """
+
+    def __init__(self, text: str):
+        header, _, body = text.partition("\nTree=")
+        settings = dict(line.split("=", 1) for line in header.splitlines() if "=" in line)
+        if settings.get("num_tree_per_iteration", "1") != "1" or settings.get("num_class", "1") != "1":
+            raise ValueError("only single-output models are supported")
+        if "average_output" in header.splitlines():
+            raise ValueError("random-forest mode (average_output) is not supported")
+        # Objectives whose prediction is the raw summed score; others (binary, poisson, ...) transform it.
+        if settings.get("objective", "").split(" ")[0] not in {"quantile", "regression", "regression_l1", "huber", "fair"}:
+            raise ValueError(f"objective {settings.get('objective')!r} is not supported")
+
+        self.trees = []
+        for block in body.split("\nTree="):
+            block = block.split("end of trees")[0]
+            fields = dict(line.split("=", 1) for line in block.splitlines() if "=" in line)
+            if "num_leaves" not in fields:
+                continue
+            if fields.get("num_cat", "0") != "0" or fields.get("is_linear", "0") != "0":
+                raise ValueError("categorical splits and linear trees are not supported")
+            leaf_value = [float(v) for v in fields["leaf_value"].split()]
+            if int(fields["num_leaves"]) == 1:
+                self.trees.append(([], [], [], [], leaf_value))
+                continue
+            if any(int(d) not in (0, 2) for d in fields["decision_type"].split()):
+                # bit 0 = categorical, bits 2-3 = missing-value type; only bit 1 (default left) is
+                # allowed, and with no missing-value type it never comes into play.
+                raise ValueError("only plain numerical splits are supported")
+            self.trees.append((
+                [int(v) for v in fields["split_feature"].split()],
+                [float(v) for v in fields["threshold"].split()],
+                [int(v) for v in fields["left_child"].split()],
+                [int(v) for v in fields["right_child"].split()],
+                leaf_value,
+            ))
+        if not self.trees:
+            raise ValueError("no trees found in the model file")
+
+    def predict_one(self, x: list[float]) -> float:
+        """Raw score for one row: the sum of one leaf per tree, added in tree order as LightGBM does.
+        (The quantile objective has no output transform, and leaf values already include the learning
+        rate and, in the first tree, the starting average.)"""
+        # LightGBM treats any input within +-kZeroThreshold of zero as exactly 0 before walking the
+        # trees, and some splits sit right at +-kZeroThreshold, so do the same.
+        x = [0.0 if abs(v) <= ZERO_THRESHOLD else v for v in x]
+        total = 0.0
+        for split_feature, threshold, left_child, right_child, leaf_value in self.trees:
+            node = 0
+            if split_feature:
+                while node >= 0:
+                    if x[split_feature[node]] <= threshold[node]:
+                        node = left_child[node]
+                    else:
+                        node = right_child[node]
+                node = ~node  # children < 0 are leaves, stored as ~leaf_index
+            total += leaf_value[node]
+        return total
+
+
+def _load_booster(path: Path) -> TreeModel:
+    # Read as text: Python normalizes line endings on read, so a copy that picked up Windows CRLF
+    # endings (git's autocrlf does this on checkout) still parses.
+    return TreeModel(path.read_text(encoding="utf-8"))
 
 
 def get_boosters():
@@ -164,5 +236,5 @@ def next_meet_features(history: list[dict], target_date, target_bodyweight: floa
 def predict_next_meet(history: list[dict], target_date, target_bodyweight: float) -> dict[str, float]:
     """Predicted total (kg) at the 25th / 50th / 75th / 99th percentile for the meet described."""
     features = next_meet_features(history, target_date, target_bodyweight)
-    x = np.nan_to_num(np.array([features], dtype=float), nan=0.0)  # training filled NaN with 0
-    return {f"q{q}": float(booster.predict(x)[0]) for q, booster in get_boosters().items()}
+    x = [0.0 if v is None or math.isnan(v) else float(v) for v in features]  # training filled NaN with 0
+    return {f"q{q}": model.predict_one(x) for q, model in get_boosters().items()}

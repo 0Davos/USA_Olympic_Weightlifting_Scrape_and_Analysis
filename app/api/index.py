@@ -192,7 +192,7 @@ def ath_predict(
         )
 
     try:
-        # Imported on first use: it pulls in lightgbm and scipy (seconds on a cold start), which
+        # Imported on first use: it parses the four model files (a few MB of text), which
         # search and history never need and shouldn't pay for.
         from _prediction import predict_next_meet
 
