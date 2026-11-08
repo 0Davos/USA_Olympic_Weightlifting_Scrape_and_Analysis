@@ -36,7 +36,12 @@ type PredictionPoint = {
   color: string;
   label: string; // which percentile this dot is, for its hover
   athlete: string;
+  shape: MarkerShape; // the athlete's own marker shape
+  dx: number; // pixels to nudge sideways, so athletes predicted for the same date don't cover each other
 };
+
+// Space between athletes' end points when several are predicted for the same date.
+const END_POINT_SPREAD_PX = 8;
 
 type Quantile = keyof Prediction["prediction"];
 
@@ -212,8 +217,17 @@ export default function Graph({
   const showPrediction = predictions.length > 0;
   // Per prediction: a hidden point at its starting meet (so the x-axis always includes it) and a dot at
   // each band edge.
+  // Athletes predicted for the same date get their end points spread a few pixels apart, centred on the
+  // date, in the order they appear on the page.
+  const nudge = (p: GraphPrediction) => {
+    const sameDate = predictions.filter((o) => o.prediction.date === p.prediction.date);
+    return (sameDate.indexOf(p) - (sameDate.length - 1) / 2) * END_POINT_SPREAD_PX;
+  };
   const predictionPoints: PredictionPoint[] = predictions.flatMap((p) => [
-    { kind: "prediction" as const, hidden: true, t: Date.parse(p.prediction.latest_meet.date), value: p.originTotal, color: "", label: "", athlete: p.name },
+    {
+      kind: "prediction" as const, hidden: true, t: Date.parse(p.prediction.latest_meet.date), value: p.originTotal,
+      color: "", label: "", athlete: p.name, shape: p.shape, dx: 0,
+    },
     ...EDGE_DOTS.map((d) => ({
       kind: "prediction" as const,
       hidden: false,
@@ -222,6 +236,8 @@ export default function Graph({
       color: toneColor(p, d.tone),
       label: d.label,
       athlete: p.name,
+      shape: p.shape,
+      dx: nudge(p),
     })),
   ]);
 
@@ -349,7 +365,7 @@ export default function Graph({
                     props.payload?.hidden || props.cx == null || props.cy == null ? (
                       <g />
                     ) : (
-                      <circle cx={props.cx} cy={props.cy} r={5} fill={props.payload?.color} stroke="white" strokeWidth={1.5} />
+                      <Marker cx={props.cx + props.payload!.dx} cy={props.cy} color={props.payload!.color} shape={props.payload!.shape} />
                     )
                   }
                 />
