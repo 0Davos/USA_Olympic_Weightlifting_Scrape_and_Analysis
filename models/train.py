@@ -70,7 +70,9 @@ QUANTILES = [0.01, 0.25, 0.50, 0.75, 0.99]
 QUANTILE_FEATURE_COLS = FEATURE_COLS + ['prev_division_code', 'career_days', 'meet_month']
 
 # The settings each percentile's model is trained with: what RandomizedSearchCV picked for the original
-# total-predicting models (2026-09-30; the 1st percentile 2026-11-08). Not re-tuned for v2 yet.
+# total-predicting models (2026-09-30; the 1st percentile 2026-11-08), kept for v2. A v2 tuning search was
+# tried 2026-11-08 and not adopted (same accuracy; it widened the elite bands and pulled some elite lifters'
+# 99th percentile below their last total - see ROADMAP.md, model v2).
 QUANTILE_PARAMS = {
     0.01: dict(learning_rate=0.05, num_leaves=20, max_depth=5, min_child_samples=10, n_estimators=350),
     0.25: dict(learning_rate=0.07, num_leaves=60, max_depth=7, min_child_samples=30, n_estimators=500),
