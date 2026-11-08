@@ -5,6 +5,7 @@
 # via shift(1)/expanding()/rolling(), to prevent leakage.
 
 import os
+import re
 import numpy as np
 import pandas as pd
 
@@ -32,6 +33,30 @@ def safe_polyfit(y):
         return np.polyfit(range(len(y)), y, 1)[0]
     except (np.linalg.LinAlgError, ValueError):
         return 0
+
+
+def division_code(weight_category):
+    """The age division in a weight category (e.g. "Men's 16-17 Age Group 89kg"), as an ordered number for
+    the prediction models: 0 = 11 & Under, 1 = 13 & Under, 2 = 14-15, 3 = 16-17, 4 = Junior, 5 = Open,
+    6+ = Masters by bracket (35-39 = 6, 40-44 = 7, ...). NaN if it can't be read. A number rather than a
+    category so the API's model reader needs no categorical splits. Must match _division_code in
+    app/api/_prediction.py (tests/check_prediction_features.py checks they agree)."""
+    s = re.sub(r"^(Men's|Women's)\s*|\s*(Men's|Women's)\s*", " ", str(weight_category))
+    s = re.sub(r"\s*\d+\+?\s*kg\+?$", "", s).strip()
+    if "Under" in s:
+        return 1 if s.startswith("13") else 0
+    if s.startswith("14-15"):
+        return 2
+    if s.startswith("16-17"):
+        return 3
+    if s.startswith("Junior"):
+        return 4
+    if s.startswith("Open"):
+        return 5
+    m = re.match(r"Masters \((\d+)", s)
+    if m:
+        return 6 + (int(m.group(1)) - 35) // 5
+    return np.nan
 
 
 def count_comps_last_180_days(group):
@@ -198,6 +223,19 @@ def add_attendance_features(df_cleaned):
     df_cleaned['comp_timing_deviation'] = (
         df_cleaned['Days Since Last Comp'] - df_cleaned['avg_days_between_comps']
     )
+
+    # ---- model v2 (2026-11-08): three more things known before a meet
+    # The age division the athlete competed in at their previous meet (any meet, bomb-outs included):
+    # the target meet's own division isn't known when predicting ahead, but it's almost always the same.
+    df_cleaned['prev_division_code'] = (
+        df_cleaned['Weight Category'].map(division_code).groupby(df_cleaned['Name']).shift(1)
+    )
+    # Career length: days since the athlete's first meet.
+    df_cleaned['career_days'] = (
+        df_cleaned['Date'] - df_cleaned.groupby('Name')['Date'].transform('min')
+    ).dt.days
+    # The meet's month (1-12).
+    df_cleaned['meet_month'] = df_cleaned['Date'].dt.month
 
     return df_cleaned
 

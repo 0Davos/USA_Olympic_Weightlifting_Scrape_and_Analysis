@@ -216,7 +216,7 @@ def ath_predict(
     rows = run_query(
         f"""
         SELECT {NAME_DISPLAY_SQL} AS name, date, bodyweight, sn_1, sn_2, sn_3, cj_1, cj_2, cj_3,
-               best_sn, best_cj, total, bombed_out, gender
+               best_sn, best_cj, total, bombed_out, gender, weight_category
         FROM meet_results
         WHERE {NAME_KEY_SQL} = %s
         ORDER BY date ASC NULLS LAST, meet, id
@@ -234,6 +234,9 @@ def ath_predict(
     ]
     if not history:
         raise HTTPException(status_code=422, detail="This athlete has no dated meets to predict from.")
+    # The models predict the change from the last completed total, so there has to be one.
+    if not any(not r["bombed_out"] and (r["total"] or 0) > 0 for r in history):
+        raise HTTPException(status_code=422, detail="This athlete has no completed total to predict from.")
 
     latest = history[-1]
     if target_date <= latest["date"]:
