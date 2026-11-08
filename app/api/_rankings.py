@@ -89,16 +89,22 @@ def _q_points_sql() -> str:
     return f"r.total * CASE WHEN r.gender = 'Women' THEN {expr('Women')} ELSE {expr('Men')} END"
 
 
-def _best_per_athlete_sql(name_key_sql: str) -> str:
-    """Each athlete's best Q-points per gender (columns gender, key, best) under the rules that need only
-    the result itself: gender, bodyweight floor, snatch/clean & jerk ratio, date window (%(all_time)s)."""
+def _valid_result_sql() -> str:
+    """The rules that need only the result itself: gender, a real total, bodyweight floor, snatch/clean &
+    jerk ratio."""
     lo, hi = CJ_TO_SNATCH
+    return f"""r.gender IN ('Men', 'Women') AND NOT r.bombed_out AND r.total > 0
+              AND r.bodyweight >= CASE WHEN r.gender = 'Women' THEN {MIN_BODYWEIGHT['Women']} ELSE {MIN_BODYWEIGHT['Men']} END
+              AND r.best_sn > 0 AND r.best_cj / r.best_sn BETWEEN {lo} AND {hi}"""
+
+
+def _best_per_athlete_sql(name_key_sql: str) -> str:
+    """Each athlete's best Q-points per gender (columns gender, key, best) under the per-result rules
+    (_valid_result_sql) and the date window (%(all_time)s)."""
     return f"""
             SELECT r.gender, {name_key_sql} AS key, max({_q_points_sql()}) AS best
             FROM meet_results r
-            WHERE r.gender IN ('Men', 'Women') AND NOT r.bombed_out AND r.total > 0
-              AND r.bodyweight >= CASE WHEN r.gender = 'Women' THEN {MIN_BODYWEIGHT['Women']} ELSE {MIN_BODYWEIGHT['Men']} END
-              AND r.best_sn > 0 AND r.best_cj / r.best_sn BETWEEN {lo} AND {hi}
+            WHERE {_valid_result_sql()}
               AND (%(all_time)s OR r.date >= current_date - interval '1 year')
             GROUP BY 1, 2"""
 
@@ -259,4 +265,104 @@ def compute_distribution(cur, all_time: bool, name_key_sql: str) -> dict:
             counts = {b["lo"]: b["athletes"] for b in d["bins"]}
             lo, hi = d["bins"][0]["lo"], d["bins"][-1]["lo"]
             d["bins"] = [{"lo": x, "athletes": counts.get(x, 0)} for x in range(lo, hi + BIN_WIDTH, BIN_WIDTH)]
+    return out
+
+# ---- fastest improvers (the tables at the bottom of the home page)
+
+# Decided with the user 2026-11-08: an athlete's gain is the Q-points of their latest meet minus their best
+# Q-points in the 12 months before that meet, and the latest meet must be within the past 12 months. Only
+# athletes with a result in both are ranked, and only gains above 0.
+IMPROVER_CANDIDATES = 40
+
+
+def _year_before(d):
+    """The same calendar day a year earlier (29 February maps to 28 February), like SQL's
+    date - interval '1 year'."""
+    return d.replace(year=d.year - 1) if (d.month, d.day) != (2, 29) else d.replace(year=d.year - 1, day=28)
+
+
+def improvers_query(name_key_sql: str) -> str:
+    """Each gender's top %(limit)s athletes by gain under the per-result rules (dated results from the past
+    2 years only: the latest meet is within 1 year and its comparison window 1 year before that).
+    Parameter: limit."""
+    return f"""
+        WITH valid AS (
+            SELECT r.gender, {name_key_sql} AS key, r.date, {_q_points_sql()} AS q
+            FROM meet_results r
+            WHERE {_valid_result_sql()}
+              AND r.date >= current_date - interval '2 years' AND r.date <= current_date
+        ), latest AS (
+            SELECT DISTINCT ON (gender, key) gender, key, date, q
+            FROM valid ORDER BY gender, key, date DESC, q DESC
+        ), gains AS (
+            SELECT l.gender, l.key, l.q - max(v.q) AS gain
+            FROM latest l
+            JOIN valid v ON v.gender = l.gender AND v.key = l.key
+                AND v.date < l.date AND v.date >= l.date - interval '1 year'
+            WHERE l.date >= current_date - interval '1 year'
+            GROUP BY l.gender, l.key, l.q
+        ), ranked AS (
+            SELECT *, row_number() OVER (PARTITION BY gender ORDER BY gain DESC) AS rank FROM gains
+        )
+        SELECT gender, key, gain FROM ranked WHERE rank <= %(limit)s AND gain > 0
+    """
+
+
+def compute_improvers(cur, normalize, name_key_sql: str, name_display_sql: str) -> dict:
+    """{"Men": [...], "Women": [...]}, each the top TOP_N improvers (rank, name, meet, date, bodyweight,
+    total, q_points, before_q_points, gain), on an open database cursor.
+
+    Like compute_rankings: the IMPROVER_CANDIDATES biggest gains per gender under the per-result rules come
+    from SQL, then the jump rule and the hand-kept lists are applied to those athletes' histories here.
+    Unlike the lists this is not proven exact: those rules can also RAISE a gain (by dropping a too-high
+    result from the earlier 12 months), so an athlete just outside the candidates could in principle
+    belong in the top 10. That needs a bad result in exactly that window, and the rules touch about 0.2% of
+    results."""
+    from datetime import date as _date
+
+    excluded, confirmed = _listed(EXCLUDED_RESULTS, normalize), _listed(CONFIRMED_RESULTS, normalize)
+    today = _date.today()
+    since = _year_before(today)
+    lo, hi = CJ_TO_SNATCH
+    cur.execute(improvers_query(name_key_sql), {"limit": IMPROVER_CANDIDATES})
+    cands = cur.fetchall()
+    cur.execute(history_query(name_key_sql, name_display_sql), {"keys": sorted({c["key"] for c in cands})})
+    history = {}
+    for row in cur.fetchall():
+        row = {**row, "total": float(row["total"]),
+               "bodyweight": float(row["bodyweight"]) if row["bodyweight"] is not None else 0.0,
+               "best_sn": float(row["best_sn"] or 0), "best_cj": float(row["best_cj"] or 0)}
+        history.setdefault(row["key"], []).append(row)
+
+    out = {}
+    for gender in ("Men", "Women"):
+        rows = []
+        for c in (c for c in cands if c["gender"] == gender):
+            results = history.get(c["key"], [])
+            eligible = []
+            for r, jump in zip(results, jump_flags(results)):
+                ident = (r["key"], r["meet_key"], r["date"].isoformat() if r["date"] else None, r["total"])
+                if (r["gender"] != gender or r["date"] is None or r["date"] > today
+                        or r["bodyweight"] < MIN_BODYWEIGHT[gender] or ident in excluded):
+                    continue
+                if r["best_sn"] <= 0 or not lo <= r["best_cj"] / r["best_sn"] <= hi or (jump and ident not in confirmed):
+                    continue
+                eligible.append({**r, "q_points": q_points(r["total"], r["bodyweight"], gender)})
+            if not eligible:
+                continue
+            # their latest meet (the better result if two share that date)
+            latest = max(eligible, key=lambda r: (r["date"], r["q_points"]))
+            if latest["date"] < since:
+                continue
+            earlier = [r["q_points"] for r in eligible
+                       if _year_before(latest["date"]) <= r["date"] < latest["date"]]
+            if earlier and latest["q_points"] > max(earlier):
+                rows.append({**latest, "before_q_points": max(earlier), "gain": latest["q_points"] - max(earlier)})
+        rows.sort(key=lambda r: (-r["gain"], r["name"]))
+        out[gender] = [
+            {"rank": i + 1, "name": r["name"], "meet": r["meet"], "date": r["date"],
+             "bodyweight": r["bodyweight"], "total": r["total"], "q_points": r["q_points"],
+             "before_q_points": r["before_q_points"], "gain": r["gain"]}
+            for i, r in enumerate(rows[:TOP_N])
+        ]
     return out

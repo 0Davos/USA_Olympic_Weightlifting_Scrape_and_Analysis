@@ -195,6 +195,25 @@ def q_points_distribution(response: Response, window: Literal["year", "all"] = "
     return {"window": window, "men": dist["Men"], "women": dist["Women"]}
 
 
+@app.get("/api/rankings/improvers")
+def fastest_improvers(response: Response):
+    """Top 10 men and women by Q-points gained: their latest meet (within the past 12 months) against
+    their best in the 12 months before it. Same data rules as the Q-points lists (see _rankings.py)."""
+    found = with_cursor(
+        lambda cur: _rankings.compute_improvers(cur, normalize, NAME_KEY_SQL, NAME_DISPLAY_SQL)
+    )
+    response.headers["Cache-Control"] = CACHE_FOR_AN_HOUR
+
+    def entry(r: dict) -> dict:
+        # rounded before subtracting, so the gain shown always equals now minus before as shown
+        out = to_json_row(r)
+        out["q_points"], out["before_q_points"] = round(out["q_points"], 1), round(out["before_q_points"], 1)
+        out["gain"] = round(out["q_points"] - out["before_q_points"], 1)
+        return out
+
+    return {"men": [entry(r) for r in found["Men"]], "women": [entry(r) for r in found["Women"]]}
+
+
 @app.get("/api/athletes/predict")
 def ath_predict(
     name: str = Query(..., min_length=1, max_length=150),

@@ -17,13 +17,14 @@ import {
 // windows never shows the other window's data, and "loading" is simply "no outcome for this request".
 type Load<T> = { key: string; status: "ready"; data: T } | { key: string; status: "error" };
 
-const BOX_CLASS = "rounded-xl border border-black/10 p-6 dark:border-white/10";
-const MUTED_CLASS = "text-sm text-black/50 dark:text-white/50";
-const BAR_CLASS = "inline-block rounded bg-black/5 dark:bg-white/10";
-const ROWS = 10;
+export const BOX_CLASS = "rounded-xl border border-black/10 p-6 dark:border-white/10";
+export const MUTED_CLASS = "text-sm text-black/50 dark:text-white/50";
+export const BAR_CLASS = "inline-block rounded bg-black/5 dark:bg-white/10";
+export const ROWS = 10;
 
-// Fetches `fetcher(period)` whenever the period or retry count changes.
-function useLoad<T>(fetcher: (p: RankingWindow, s: AbortSignal) => Promise<T>, period: RankingWindow, attempt: number) {
+// Fetches `fetcher(period)` whenever the period or retry count changes (`fetcher` must be a stable
+// function, e.g. defined at module level). Also used by FastestImprovers.
+export function useLoad<T, P extends string = RankingWindow>(fetcher: (p: P, s: AbortSignal) => Promise<T>, period: P, attempt: number) {
   const [load, setLoad] = useState<Load<T> | null>(null);
   const key = `${period}#${attempt}`;
   useEffect(() => {
@@ -87,7 +88,7 @@ function RankingTable({ entries }: { entries: RankingEntry[] | null }) {
 }
 
 // Shown over the placeholder content (which keeps the box its full size) when a fetch fails.
-function ErrorOverlay({ what, onRetry }: { what: string; onRetry: () => void }) {
+export function ErrorOverlay({ what, onRetry }: { what: string; onRetry: () => void }) {
   return (
     <div className={`absolute inset-0 flex flex-col items-center justify-center gap-3 ${MUTED_CLASS}`}>
       <span>Couldn&apos;t load the {what} right now.</span>
