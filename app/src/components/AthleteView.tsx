@@ -132,10 +132,12 @@ export default function AthleteView({ name }: { name: string }) {
     } else if (!answered.ok) {
       message = { tone: "error", text: answered.message };
     } else {
-      const p = answered.data.prediction;
+      // The one place the prediction is described (the no-bomb-out note is in the controls' helper
+      // text just above); the bands' values are on the graph's hover.
+      const { date, bodyweight, meets_used } = answered.data;
       message = {
         tone: "info",
-        text: `Predicted total on ${answered.data.date} at ${answered.data.bodyweight} kg: ${p.q50} kg (likely ${p.q25}–${p.q75} kg, 99% chance under ${p.q99} kg).`,
+        text: `Predicted total for ${date} at ${bodyweight} kg, from ${meets_used} meet${meets_used === 1 ? "" : "s"}.`,
       };
     }
   }

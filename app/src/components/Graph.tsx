@@ -22,30 +22,50 @@ type Point = {
   bodyweight: number | null;
 };
 
-// The marker at the chosen date. `hidden` is the bands' starting point: it's never drawn, it only
-// makes sure the x-axis range includes that meet even when the date filter excludes it.
+// A dot at the chosen date, one per band edge. `hidden` is the bands' starting point: it's never drawn,
+// it only makes sure the x-axis range includes that meet even when the date filter excludes it.
 type PredictionPoint = {
   kind: "prediction";
   hidden: boolean;
   t: number;
   value: number;
+  color: string;
   prediction: Prediction;
 };
+
+type Quantile = keyof Prediction["prediction"];
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const X_PADDING_MS = 30 * DAY_MS; // keeps a lone point (and the end points) off the axis edges
 const DOT_COLOR = "#2563eb";
-const PREDICTION_COLOR = "#f59e0b";
+
+// The prediction bands, outermost first: each runs between two neighbouring percentiles.
+const BANDS: { label: string; color: string; lo: Quantile; hi: Quantile }[] = [
+  { label: "75th–99th percentile", color: "#ef4444", lo: "q75", hi: "q99" },
+  { label: "50th–75th percentile", color: "#f97316", lo: "q50", hi: "q75" },
+  { label: "25th–50th percentile", color: "#eab308", lo: "q25", hi: "q50" },
+];
+const BAND_OPACITY = 0.6; // lower, and the three colours blur together on the dark theme
+// One dot per band edge, coloured like the band it tops (the 25th is the yellow band's floor).
+const EDGE_DOTS: { q: Quantile; color: string }[] = [
+  { q: "q99", color: BANDS[0].color },
+  { q: "q75", color: BANDS[1].color },
+  { q: "q50", color: BANDS[2].color },
+  { q: "q25", color: BANDS[2].color },
+];
+
+function Swatch({ color }: { color: string }) {
+  return <span className="inline-block h-2 w-3 shrink-0 rounded-sm" style={{ backgroundColor: color }} />;
+}
 
 // Dates are plain calendar days, so format in UTC to avoid the viewer's timezone shifting them.
 function formatTick(t: number) {
   return new Date(t).toLocaleDateString(undefined, { month: "short", year: "numeric", timeZone: "UTC" });
 }
 
-// The bands: shaded fans that start at one point (the latest meet's total) and widen out to the
-// chosen date. The darker fan is the likely range (25th-75th percentile), the lighter one reaches up
-// to the 99th percentile, and the dashed line is the median. Drawn with the chart's own axis scales so
-// it stays aligned with the dots.
+// The bands (BANDS): shaded fans that start at one point (the latest meet's total) and widen out to
+// the chosen date; the dashed line is the median. Drawn with the chart's own axis scales so they stay
+// aligned with the dots.
 function PredictionBands({ prediction, originTotal }: { prediction: Prediction; originTotal: number }) {
   const xScale = useXAxisScale();
   const yScale = useYAxisScale();
@@ -60,9 +80,15 @@ function PredictionBands({ prediction, originTotal }: { prediction: Prediction; 
 
   return (
     <g pointerEvents="none">
-      <polygon points={`${x0},${origin} ${x1},${y(q.q99)} ${x1},${y(q.q75)}`} fill={PREDICTION_COLOR} fillOpacity={0.12} />
-      <polygon points={`${x0},${origin} ${x1},${y(q.q75)} ${x1},${y(q.q25)}`} fill={PREDICTION_COLOR} fillOpacity={0.3} />
-      <line x1={x0} y1={origin} x2={x1} y2={y(q.q50)} stroke={PREDICTION_COLOR} strokeWidth={2} strokeDasharray="5 4" />
+      {BANDS.map((b) => (
+        <polygon
+          key={b.label}
+          points={`${x0},${origin} ${x1},${y(q[b.hi])} ${x1},${y(q[b.lo])}`}
+          fill={b.color}
+          fillOpacity={BAND_OPACITY}
+        />
+      ))}
+      <line x1={x0} y1={origin} x2={x1} y2={y(q.q50)} stroke="currentColor" strokeWidth={1.5} strokeDasharray="5 4" />
     </g>
   );
 }
@@ -75,20 +101,16 @@ function ChartTooltip({ active, payload, metric }: { active?: boolean; payload?:
 
   if (p.kind === "prediction") {
     if (p.hidden) return null;
-    const { prediction: pr, date, bodyweight, meets_used } = p.prediction;
+    const pr = p.prediction.prediction;
     return (
-      <div className={box}>
-        <div className="font-medium">Predicted for {date}</div>
-        <div className="mt-1">
-          Median: <span className="font-medium">{pr.q50} kg</span>
-        </div>
-        <div>
-          Likely range: {pr.q25}–{pr.q75} kg
-        </div>
-        <div>99% of outcomes under {pr.q99} kg</div>
-        <div className={muted}>
-          At {bodyweight} kg, from {meets_used} meet{meets_used === 1 ? "" : "s"}. Assumes no bomb-out.
-        </div>
+      <div className={`${box} space-y-0.5`}>
+        {BANDS.map((b) => (
+          <div key={b.label} className="flex items-center gap-1.5">
+            <Swatch color={b.color} />
+            {b.label}: {pr[b.lo]} to {pr[b.hi]} kg
+          </div>
+        ))}
+        <div className="font-medium">Median: {pr.q50} kg</div>
       </div>
     );
   }
@@ -136,8 +158,15 @@ export default function Graph({
   const predictionPoints: PredictionPoint[] =
     showPrediction
       ? [
-          { kind: "prediction", hidden: true, t: Date.parse(prediction.latest_meet.date), value: originTotal, prediction },
-          { kind: "prediction", hidden: false, t: Date.parse(prediction.date), value: prediction.prediction.q50, prediction },
+          { kind: "prediction", hidden: true, t: Date.parse(prediction.latest_meet.date), value: originTotal, color: "", prediction },
+          ...EDGE_DOTS.map((d) => ({
+            kind: "prediction" as const,
+            hidden: false,
+            t: Date.parse(prediction.date),
+            value: prediction.prediction[d.q],
+            color: d.color,
+            prediction,
+          })),
         ]
       : [];
   const ceiling = showPrediction ? prediction.prediction.q99 : 0;
@@ -146,6 +175,20 @@ export default function Graph({
 
   return (
     <div>
+      {showPrediction && (
+        <p className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-black/60 dark:text-white/60">
+          {BANDS.map((b) => (
+            <span key={b.label} className="flex items-center gap-1">
+              <Swatch color={b.color} />
+              {b.label}
+            </span>
+          ))}
+          <span className="flex items-center gap-1">
+            <span className="inline-block w-3 border-t-2 border-dashed border-current" />
+            median
+          </span>
+        </p>
+      )}
       <div className="h-80 rounded-xl border border-black/10 p-3 text-black/60 dark:border-white/10 dark:text-white/60">
         {points.length === 0 && !showPrediction ? (
           <div className="flex h-full items-center justify-center text-sm">No results to plot.</div>
@@ -188,13 +231,12 @@ export default function Graph({
               {showPrediction && (
                 <Scatter
                   data={predictionPoints}
-                  fill={PREDICTION_COLOR}
                   isAnimationActive={false}
                   shape={(props: { cx?: number; cy?: number; payload?: PredictionPoint }) =>
                     props.payload?.hidden || props.cx == null || props.cy == null ? (
                       <g />
                     ) : (
-                      <circle cx={props.cx} cy={props.cy} r={6} fill={PREDICTION_COLOR} stroke="white" strokeWidth={1.5} />
+                      <circle cx={props.cx} cy={props.cy} r={5} fill={props.payload?.color} stroke="white" strokeWidth={1.5} />
                     )
                   }
                 />
@@ -203,25 +245,9 @@ export default function Graph({
           </ResponsiveContainer>
         )}
       </div>
-      {(showPrediction || undated > 0) && (
-        <p className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-black/50 dark:text-white/50">
-          {showPrediction && (
-            <>
-              <span className="flex items-center gap-1">
-                <span className="inline-block h-2 w-3 rounded-sm" style={{ backgroundColor: PREDICTION_COLOR, opacity: 0.55 }} />
-                likely range (25th–75th percentile)
-              </span>
-              <span className="flex items-center gap-1">
-                <span className="inline-block h-2 w-3 rounded-sm" style={{ backgroundColor: PREDICTION_COLOR, opacity: 0.25 }} />
-                up to the 99th percentile
-              </span>
-            </>
-          )}
-          {undated > 0 && (
-            <span>
-              {undated} meet{undated === 1 ? "" : "s"} with no date not plotted
-            </span>
-          )}
+      {undated > 0 && (
+        <p className="mt-2 text-xs text-black/50 dark:text-white/50">
+          {undated} meet{undated === 1 ? "" : "s"} with no date not plotted
         </p>
       )}
     </div>
