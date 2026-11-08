@@ -93,6 +93,13 @@ if dated:
 else:
     print("note: that athlete has no dated meets, so the prediction checks were skipped")
 
+# ---- home page Q-points rankings
+for window in ("year", "all"):
+    status, body, secs = fetch("/api/rankings/q-points", window=window)
+    lists = (body.get("men", []), body.get("women", [])) if isinstance(body, dict) else ([], [])
+    check(f"Q-points rankings ({window}) return 10 men and 10 women", status == 200 and all(len(x) == 10 for x in lists),
+          f"{status}, {secs:.1f}s, leaders: {[x[0]['name'] for x in lists if x]}")
+
 # ---- one athlete page rendered through the website (the browser flow)
 status, body, secs = fetch("/athlete/" + urllib.parse.quote(name))
 check("the athlete page itself loads", status == 200, f"{status}, {secs:.1f}s")
