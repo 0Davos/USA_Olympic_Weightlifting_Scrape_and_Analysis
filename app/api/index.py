@@ -198,7 +198,7 @@ def q_points_distribution(response: Response, window: Literal["year", "all"] = "
 @app.get("/api/rankings/improvers")
 def fastest_improvers(response: Response):
     """Top 10 men and women by Q-points gained: their latest meet (within the past 12 months) against
-    their best at any earlier meet, for athletes who also competed in the 12 months before it. Same data
+    their best at any earlier meet, for athletes with 3+ meets who also competed in the 12 months before it. Same data
     rules as the Q-points lists, plus names that look like two people are skipped (see _rankings.py)."""
     found = with_cursor(
         lambda cur: _rankings.compute_improvers(cur, normalize, NAME_KEY_SQL, NAME_DISPLAY_SQL)
