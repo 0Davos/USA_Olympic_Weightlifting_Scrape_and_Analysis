@@ -292,3 +292,62 @@ def ath_predict(
         "meets_used": len(history),
         "assumes_no_bomb_out": True,
     }
+
+# ---- athlete counts (the two bar charts at the bottom of the home page)
+
+# The USAW records effectively start in 2012: about 150 athletes have a "first meet" before that, on
+# impossible dates (1905, 1958, ...), so the new-athletes chart starts here and leaves those out. 2012
+# itself also counts everyone who was already competing when the records begin.
+STATS_FIRST_YEAR = 2012
+# The meets-per-athlete chart has one bar per count up to this; athletes with more are reported as a number.
+STATS_MAX_MEETS_BAR = 30
+
+
+@app.get("/api/stats/athletes")
+def athlete_stats(response: Response):
+    """New athletes per year (each athlete counted in the year of their first dated meet) and how many
+    athletes have attended each number of meets, all time. Athletes are name keys, as everywhere on the
+    site; a meet is a distinct (meet, date), bomb-outs included. One pass over the table (about 3s of the
+    5s statement timeout from a dev machine), plus an indexed lookup of the most-meets athlete's name: taking
+    the name in the pass itself pushed it over the timeout."""
+
+    def work(cur):
+        cur.execute(f"""
+        WITH athletes AS (
+            SELECT {NAME_KEY_SQL} AS key, min(date) AS first,
+                   count(DISTINCT (lower(regexp_replace(btrim(meet), '\\s+', ' ', 'g')), date)) AS meets
+            FROM meet_results
+            WHERE date IS NULL OR date <= current_date
+            GROUP BY 1
+        )
+        SELECT 'year' AS kind, extract(year FROM first)::int AS value, count(*) AS athletes, NULL AS name
+        FROM athletes WHERE first IS NOT NULL GROUP BY 2
+        UNION ALL
+        SELECT 'meets', meets::int, count(*), NULL FROM athletes GROUP BY 2
+        UNION ALL
+        (SELECT 'most', meets::int, 1, key FROM athletes ORDER BY meets DESC, key LIMIT 1)
+        """)
+        found = cur.fetchall()
+        top = next((r["name"] for r in found if r["kind"] == "most"), None)
+        names = []
+        if top:
+            cur.execute(f"SELECT {NAME_DISPLAY_SQL} AS name FROM meet_results WHERE {NAME_KEY_SQL} = %s", (top,))
+            names = cur.fetchall()
+        return found, (pick_display_name(names) if names else None)
+
+    rows, most_name = with_cursor(work)
+    response.headers["Cache-Control"] = CACHE_FOR_AN_HOUR
+    by_year = {r["value"]: r["athletes"] for r in rows if r["kind"] == "year"}
+    by_meets = {r["value"]: r["athletes"] for r in rows if r["kind"] == "meets"}
+    more = [m for m in by_meets if m > STATS_MAX_MEETS_BAR]
+    return {
+        "new_per_year": [{"year": y, "athletes": by_year.get(y, 0)}
+                         for y in range(STATS_FIRST_YEAR, date.today().year + 1)],
+        "current_year": date.today().year,
+        "meets_per_athlete": [{"meets": m, "athletes": by_meets.get(m, 0)}
+                              for m in range(1, STATS_MAX_MEETS_BAR + 1)],
+        # the athlete with the most meets, linked from the chart
+        "more_meets": {"athletes": sum(by_meets[m] for m in more), "most": max(more, default=None),
+                       "most_name": most_name},
+        "athletes": sum(by_meets.values()),
+    }

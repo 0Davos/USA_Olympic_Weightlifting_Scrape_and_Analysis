@@ -52,3 +52,19 @@ export async function fetchDistributions(window: RankingWindow, signal: AbortSig
   if (!res.ok) throw new Error(`distribution request failed: ${res.status}`);
   return res.json();
 }
+
+// ---- athlete counts (GET /api/stats/athletes), the bar charts at the bottom of the home page
+
+export type AthleteStats = {
+  new_per_year: { year: number; athletes: number }[]; // from 2012, when the records begin
+  current_year: number; // the last year in new_per_year, still in progress
+  meets_per_athlete: { meets: number; athletes: number }[]; // 1 to 30 meets
+  more_meets: { athletes: number; most: number | null; most_name: string | null }; // athletes with more than 30
+  athletes: number;
+};
+
+export async function fetchAthleteStats(signal: AbortSignal): Promise<AthleteStats> {
+  const res = await fetch("/api/stats/athletes", { signal });
+  if (!res.ok) throw new Error(`athlete stats request failed: ${res.status}`);
+  return res.json();
+}
