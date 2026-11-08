@@ -150,8 +150,8 @@ def ath_predict(
     target_date: date = Query(..., alias="date"),
     bodyweight: float = Query(..., ge=MIN_BODYWEIGHT, le=MAX_BODYWEIGHT),
 ):
-    """Predicted total (kg) for the athlete's next meet on `date` at `bodyweight`, as the 25th, 50th,
-    75th and 99th percentile of what they might total. Built from their previous meets only, and
+    """Predicted total (kg) for the athlete's next meet on `date` at `bodyweight`, as the 1st, 25th,
+    50th, 75th and 99th percentile of what they might total. Built from their previous meets only, and
     assumes no bomb-out (the models were trained without them). The date must be after their latest
     meet and no more than 12 months from today."""
     last_allowed = date.today() + timedelta(days=MAX_PREDICT_DAYS_AHEAD)
@@ -201,8 +201,10 @@ def ath_predict(
         logger.exception("prediction failed")
         raise HTTPException(status_code=503, detail="Prediction unavailable")
 
-    # The four models are independent, so their outputs can occasionally cross; keep the bands ordered.
-    q25, q50, q75, q99 = sorted(predicted.values())
+    # The models are independent, so their outputs can occasionally cross; keep the bands ordered by
+    # handing the sorted values back out in percentile order.
+    keys = sorted(predicted, key=lambda k: int(k[1:]))  # "q1", "q25", ..., "q99"
+    ordered = dict(zip(keys, sorted(predicted.values())))
     return {
         "name": pick_display_name(rows),
         "date": target_date.isoformat(),
@@ -212,7 +214,7 @@ def ath_predict(
             "total": latest["total"],
             "bombed_out": latest["bombed_out"],
         },
-        "prediction": {"q25": round(q25, 1), "q50": round(q50, 1), "q75": round(q75, 1), "q99": round(q99, 1)},
+        "prediction": {k: round(v, 1) for k, v in ordered.items()},
         "meets_used": len(history),
         "assumes_no_bomb_out": True,
     }

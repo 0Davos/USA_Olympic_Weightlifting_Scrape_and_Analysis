@@ -152,7 +152,8 @@ check("prediction module loaded lazily on the first prediction", "_prediction" i
 check("predicting never imports the lightgbm package (it can't load on Vercel)", "lightgbm" not in sys.modules)
 p = j["prediction"]
 check("response has exactly the documented fields", set(j) == {"name", "date", "bodyweight", "latest_meet", "prediction", "meets_used", "assumes_no_bomb_out"})
-check("quantiles ordered q25 <= q50 <= q75 <= q99", p["q25"] <= p["q50"] <= p["q75"] <= p["q99"], str(p))
+check("all five percentiles returned (q1 ... q99)", list(p) == ["q1", "q25", "q50", "q75", "q99"], str(list(p)))
+check("percentiles ordered q1 <= q25 <= ... <= q99", list(p.values()) == sorted(p.values()), str(p))
 hist = get("/api/athletes/history", name=normal).json()["results"]
 real_last = [x for x in hist if x["date"]][-1]
 check("latest_meet is the athlete's real latest meet", j["latest_meet"] == {"date": real_last["date"], "total": real_last["total"], "bombed_out": real_last["bombed_out"]}, str(j["latest_meet"]))
