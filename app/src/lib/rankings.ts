@@ -59,7 +59,7 @@ export type AthleteStats = {
   new_per_year: { year: number; athletes: number }[]; // from 2012, when the records begin
   current_year: number; // the last year in new_per_year, still in progress
   meets_per_athlete: { meets: number; athletes: number }[]; // 1 to 30 meets
-  more_meets: { athletes: number; most: number | null }; // athletes with more than 30
+  more_meets: { athletes: number; most: number | null; most_name: string | null }; // athletes with more than 30
   athletes: number;
 };
 

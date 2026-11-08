@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { BOX_CLASS, ErrorOverlay, useLoad } from "./QPointsLists";
@@ -11,6 +12,8 @@ const load = (_: "all", signal: AbortSignal) => fetchAthleteStats(signal);
 
 const CHART_CLASS = "h-56"; // shared with the loading placeholder so nothing jumps
 const BAR_COLOR = "var(--dist-3)"; // the mid blue of the Q-point spread charts, set for light and dark
+// The year still in progress: the same blue with white diagonal stripes (requested 2026-11-08).
+const PARTIAL_PATTERN_ID = "athlete-stats-partial";
 const SUBTITLE_CLASS = "mt-1 text-xs text-black/50 dark:text-white/50";
 
 type Point = { label: string; athletes: number; note?: string; partial?: boolean };
@@ -20,6 +23,12 @@ function Bars({ points, unit }: { points: Point[]; unit: (p: Point) => string })
     <div className={`${CHART_CLASS} text-black/60 dark:text-white/60`}>
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={points} margin={{ top: 8, right: 4, bottom: 0, left: 4 }} barCategoryGap={2}>
+          <defs>
+            <pattern id={PARTIAL_PATTERN_ID} width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+              <rect width="6" height="6" style={{ fill: BAR_COLOR }} />
+              <line x1="0" y1="0" x2="0" y2="6" stroke="white" strokeWidth="2" />
+            </pattern>
+          </defs>
           <XAxis
             dataKey="label"
             interval="preserveStartEnd"
@@ -56,7 +65,7 @@ function Bars({ points, unit }: { points: Point[]; unit: (p: Point) => string })
           />
           <Bar dataKey="athletes" fill={BAR_COLOR} radius={[4, 4, 0, 0]} isAnimationActive={false}>
             {points.map((p) => (
-              <Cell key={p.label} fillOpacity={p.partial ? 0.45 : 1} />
+              <Cell key={p.label} fill={p.partial ? `url(#${PARTIAL_PATTERN_ID})` : BAR_COLOR} />
             ))}
           </Bar>
         </BarChart>
@@ -105,7 +114,21 @@ export default function AthleteStatsCharts() {
           How many meets each athlete has attended, all time (bomb-outs included).{" "}
           <span className={more ? "" : "invisible"}>
             Plus {more ? more.athletes.toLocaleString() : "000"} athletes with more than 30
-            {more?.most ? ` (the most: ${more.most})` : ""}.
+            {more?.most && (
+              <>
+                {" "}(the most: {more.most}!
+                {more.most_name && (
+                  <>
+                    {" "}
+                    <Link href={`/athlete/${encodeURIComponent(more.most_name)}`} className="underline hover:text-black dark:hover:text-white">
+                      {more.most_name}
+                    </Link>
+                  </>
+                )}
+                )
+              </>
+            )}
+            .
           </span>
         </p>
         <div className={`mt-3 ${failed ? "invisible" : ""}`}>

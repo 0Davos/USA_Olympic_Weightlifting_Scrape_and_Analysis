@@ -307,8 +307,12 @@ STATS_MAX_MEETS_BAR = 30
 def athlete_stats(response: Response):
     """New athletes per year (each athlete counted in the year of their first dated meet) and how many
     athletes have attended each number of meets, all time. Athletes are name keys, as everywhere on the
-    site; a meet is a distinct (meet, date), bomb-outs included. One pass over the table."""
-    rows = run_query(f"""
+    site; a meet is a distinct (meet, date), bomb-outs included. One pass over the table (about 3s of the
+    5s statement timeout from a dev machine), plus an indexed lookup of the most-meets athlete's name: taking
+    the name in the pass itself pushed it over the timeout."""
+
+    def work(cur):
+        cur.execute(f"""
         WITH athletes AS (
             SELECT {NAME_KEY_SQL} AS key, min(date) AS first,
                    count(DISTINCT (lower(regexp_replace(btrim(meet), '\\s+', ' ', 'g')), date)) AS meets
@@ -316,11 +320,22 @@ def athlete_stats(response: Response):
             WHERE date IS NULL OR date <= current_date
             GROUP BY 1
         )
-        SELECT 'year' AS kind, extract(year FROM first)::int AS value, count(*) AS athletes, NULL::int AS most
+        SELECT 'year' AS kind, extract(year FROM first)::int AS value, count(*) AS athletes, NULL AS name
         FROM athletes WHERE first IS NOT NULL GROUP BY 2
         UNION ALL
         SELECT 'meets', meets::int, count(*), NULL FROM athletes GROUP BY 2
-    """, {})
+        UNION ALL
+        (SELECT 'most', meets::int, 1, key FROM athletes ORDER BY meets DESC, key LIMIT 1)
+        """)
+        found = cur.fetchall()
+        top = next((r["name"] for r in found if r["kind"] == "most"), None)
+        names = []
+        if top:
+            cur.execute(f"SELECT {NAME_DISPLAY_SQL} AS name FROM meet_results WHERE {NAME_KEY_SQL} = %s", (top,))
+            names = cur.fetchall()
+        return found, (pick_display_name(names) if names else None)
+
+    rows, most_name = with_cursor(work)
     response.headers["Cache-Control"] = CACHE_FOR_AN_HOUR
     by_year = {r["value"]: r["athletes"] for r in rows if r["kind"] == "year"}
     by_meets = {r["value"]: r["athletes"] for r in rows if r["kind"] == "meets"}
@@ -331,6 +346,8 @@ def athlete_stats(response: Response):
         "current_year": date.today().year,
         "meets_per_athlete": [{"meets": m, "athletes": by_meets.get(m, 0)}
                               for m in range(1, STATS_MAX_MEETS_BAR + 1)],
-        "more_meets": {"athletes": sum(by_meets[m] for m in more), "most": max(more, default=None)},
+        # the athlete with the most meets, linked from the chart
+        "more_meets": {"athletes": sum(by_meets[m] for m in more), "most": max(more, default=None),
+                       "most_name": most_name},
         "athletes": sum(by_meets.values()),
     }
