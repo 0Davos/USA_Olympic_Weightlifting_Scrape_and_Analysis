@@ -148,7 +148,7 @@ export default function QPointsLists() {
       <div className="mt-6 grid gap-6 sm:grid-cols-2">
         {(["men", "women"] as const).map((g) => (
           <section key={g} className={`relative ${BOX_CLASS}`}>
-            <h2 className="text-lg font-semibold">{g === "men" ? "Men" : "Women"} — how Q-points are spread</h2>
+            <h2 className="text-lg font-semibold">{g === "men" ? "Men" : "Women"} — Q-point spread</h2>
             <p className={`mt-1 text-xs text-black/50 dark:text-white/50 ${dists ? "" : "invisible"}`}>
               {dists ? dists[g].athletes.toLocaleString() : "00,000"} athletes&apos; best results{inPeriod}
             </p>
