@@ -3,9 +3,7 @@ uvicorn==0.54.0
 # Everything pinned to the versions tested locally (unpinned deps have caused CI-only failures before)
 psycopg2-binary==2.9.11
 python-dotenv==1.2.1
-# For predictions (app/api/_prediction.py). scipy and narwhals are lightgbm's own dependencies; pinned too so they can't drift.
-# No pandas or scikit-learn on purpose: they would push the deployed function over Vercel's size limit.
-lightgbm==4.7.0
+# For predictions (app/api/_prediction.py), which reads the LightGBM model files itself.
+# No lightgbm package: its Linux build needs the system library libgomp.so.1, which Vercel's Python runtime lacks.
+# No pandas or scikit-learn either: they would push the deployed function over Vercel's size limit.
 numpy==1.26.4
-scipy==1.16.3
-narwhals==2.7.0

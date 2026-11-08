@@ -131,7 +131,7 @@ if undated_only:
     u = get("/api/athletes/history", name=undated_only).json()["results"]
     check("undated meets come back with a null date", len(u) >= 1 and all(x["date"] is None for x in u))
 
-check("search and history did NOT load lightgbm (the prediction import is lazy)", "lightgbm" not in sys.modules)
+check("search and history did NOT load the prediction module (its import is lazy)", "_prediction" not in sys.modules)
 
 # ================= predict
 def latest_of(name):
@@ -148,7 +148,8 @@ target = max(today, latest) + timedelta(days=60)
 r = predict(normal, target)
 j = r.json()
 check("predict 200", r.status_code == 200, r.text[:120])
-check("lightgbm loaded lazily on the first prediction", "lightgbm" in sys.modules)
+check("prediction module loaded lazily on the first prediction", "_prediction" in sys.modules)
+check("predicting never imports the lightgbm package (it can't load on Vercel)", "lightgbm" not in sys.modules)
 p = j["prediction"]
 check("response has exactly the documented fields", set(j) == {"name", "date", "bodyweight", "latest_meet", "prediction", "meets_used", "assumes_no_bomb_out"})
 check("quantiles ordered q25 <= q50 <= q75 <= q99", p["q25"] <= p["q50"] <= p["q75"] <= p["q99"], str(p))

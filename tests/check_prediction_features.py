@@ -151,7 +151,11 @@ def main():
     print(f"\nmodel predictions on {len(x_exp):,} meets, pipeline features vs calculator features:")
     print("  (the few last-digit rounding differences above can tip a tree split the other way; the effect is tiny)")
     worst_p999 = 0.0
-    for q, booster in P.get_boosters().items():
+    # The lightgbm package here (fast on 250K rows; local only): tests/check_tree_model.py proves the
+    # API's own pure-Python reader of these model files predicts identically.
+    import lightgbm as lgb
+    for q in P.QUANTILES:
+        booster = lgb.Booster(model_str=(P.MODELS_DIR / f"lightgbm_q{q}.txt").read_text(encoding="utf-8"))
         diff = np.abs(booster.predict(x_exp) - booster.predict(x_got))
         p999 = float(np.percentile(diff, 99.9))
         worst_p999 = max(worst_p999, p999)
