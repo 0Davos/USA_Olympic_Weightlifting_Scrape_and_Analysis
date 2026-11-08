@@ -277,6 +277,11 @@ def compute_distribution(cur, all_time: bool, name_key_sql: str) -> dict:
 # qualifier, where people post a qualifying total rather than a max.
 IMPROVER_CANDIDATES = 60
 
+# Requested by the user 2026-11-08: only athletes with more than two meets on record (counting results
+# that pass the data rules, the latest included), so a cautious first meet followed by a second one
+# doesn't fill the list.
+IMPROVER_MIN_MEETS = 3
+
 # Two people sharing a name show up as bodyweight jumps: an athlete whose bodyweight changes by more than
 # this fraction between two meets less than MERGE_MAX_GAP_DAYS apart is left out of the improvers.
 MERGE_BODYWEIGHT_CHANGE = 0.25
@@ -317,7 +322,7 @@ def improvers_query(name_key_sql: str) -> str:
             JOIN valid v ON v.gender = l.gender AND v.key = l.key AND v.date < l.date
             WHERE l.date >= current_date - interval '1 year'
             GROUP BY l.gender, l.key, l.date, l.q
-            HAVING max(v.date) >= l.date - interval '1 year'
+            HAVING max(v.date) >= l.date - interval '1 year' AND count(*) >= {IMPROVER_MIN_MEETS - 1}
         ), ranked AS (
             SELECT *, row_number() OVER (PARTITION BY gender ORDER BY gain DESC) AS rank FROM gains
         )
@@ -371,7 +376,8 @@ def compute_improvers(cur, normalize, name_key_sql: str, name_display_sql: str) 
             # their latest meet (the better result if two share that date)
             latest = max(eligible, key=lambda r: (r["date"], r["q_points"]))
             earlier = [r for r in eligible if r["date"] < latest["date"]]
-            if latest["date"] < since or not earlier or max(r["date"] for r in earlier) < _year_before(latest["date"]):
+            if (latest["date"] < since or len(earlier) < IMPROVER_MIN_MEETS - 1
+                    or max(r["date"] for r in earlier) < _year_before(latest["date"])):
                 continue
             before = max(r["q_points"] for r in earlier)
             if latest["q_points"] > before:
