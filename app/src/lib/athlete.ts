@@ -26,6 +26,23 @@ export const METRIC_FIELD = {
   Total: "total",
 } as const satisfies Record<Metric, keyof Meet>;
 
+// ---- athletes on the graph (the page's athlete, then up to MAX_COMPARED compared ones)
+
+export type MarkerShape = "circle" | "square" | "diamond";
+
+// One colour family per athlete, in this fixed order (requested 2026-11-08): reds/oranges/yellows, then
+// greens, then blues/purples - so the page's own athlete shares the warm family with its prediction
+// bands. Orange and green are hard to tell apart with red-green colour blindness (the dataviz palette
+// validator passes them only with a second cue), so each athlete also gets its own marker shape.
+export const ATHLETE_STYLES: { color: string; shape: MarkerShape }[] = [
+  { color: "#ea580c", shape: "circle" },
+  { color: "#16a34a", shape: "square" },
+  { color: "#7c3aed", shape: "diamond" },
+];
+export const MAX_COMPARED = ATHLETE_STYLES.length - 1;
+
+export type GraphSeries = { name: string; rows: Meet[]; color: string; shape: MarkerShape };
+
 // Resolves to null when the API says the athlete doesn't exist; throws on any other failure.
 export async function fetchHistory(name: string, signal: AbortSignal): Promise<AthleteHistory | null> {
   const res = await fetch(`/api/athletes/history?name=${encodeURIComponent(name)}`, { signal });
