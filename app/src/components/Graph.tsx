@@ -31,6 +31,7 @@ type PredictionPoint = {
   t: number;
   value: number;
   color: string;
+  label: string; // which percentile this dot is, for its hover
   prediction: Prediction;
 };
 
@@ -59,12 +60,12 @@ const BAND_KEY = [
 ];
 const BAND_OPACITY = 0.6; // lower, and the colours blur together on the dark theme
 // One dot per band edge, coloured like the band between it and the median.
-const EDGE_DOTS: { q: Quantile; color: string }[] = [
-  { q: "q99", color: RED },
-  { q: "q75", color: ORANGE },
-  { q: "q50", color: ORANGE },
-  { q: "q25", color: ORANGE },
-  { q: "q1", color: RED },
+const EDGE_DOTS: { q: Quantile; color: string; label: string }[] = [
+  { q: "q99", color: RED, label: "99th percentile" },
+  { q: "q75", color: ORANGE, label: "75th percentile" },
+  { q: "q50", color: ORANGE, label: "Median (50th percentile)" },
+  { q: "q25", color: ORANGE, label: "25th percentile" },
+  { q: "q1", color: RED, label: "1st percentile" },
 ];
 
 function Swatch({ color }: { color: string }) {
@@ -115,16 +116,11 @@ function ChartTooltip({ active, payload, metric }: { active?: boolean; payload?:
 
   if (p.kind === "prediction") {
     if (p.hidden) return null;
-    const pr = p.prediction.prediction;
+    // Each dot shows only its own percentile.
     return (
-      <div className={`${box} space-y-0.5`}>
-        {BANDS.map((b) => (
-          <div key={b.label} className="flex items-center gap-1.5">
-            <Swatch color={b.color} />
-            {b.label}: {pr[b.lo]} to {pr[b.hi]} kg
-          </div>
-        ))}
-        <div className="font-medium">Median: {pr.q50} kg</div>
+      <div className={`${box} flex items-center gap-1.5`}>
+        <Swatch color={p.color} />
+        {p.label}: <span className="font-medium">{p.value} kg</span>
       </div>
     );
   }
@@ -172,13 +168,14 @@ export default function Graph({
   const predictionPoints: PredictionPoint[] =
     showPrediction
       ? [
-          { kind: "prediction", hidden: true, t: Date.parse(prediction.latest_meet.date), value: originTotal, color: "", prediction },
+          { kind: "prediction", hidden: true, t: Date.parse(prediction.latest_meet.date), value: originTotal, color: "", label: "", prediction },
           ...EDGE_DOTS.map((d) => ({
             kind: "prediction" as const,
             hidden: false,
             t: Date.parse(prediction.date),
             value: prediction.prediction[d.q],
             color: d.color,
+            label: d.label,
             prediction,
           })),
         ]
