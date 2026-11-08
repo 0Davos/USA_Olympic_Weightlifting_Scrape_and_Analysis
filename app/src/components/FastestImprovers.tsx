@@ -77,8 +77,8 @@ export default function FastestImprovers() {
         ))}
       </div>
       <p className="mt-3 text-xs text-black/50 dark:text-white/50">
-        Q-points at each athlete&apos;s latest meet (within the past 12 months) compared with their best in the 12
-        months before it. No age adjustment.
+        Q-points at each athlete&apos;s latest meet (within the past 12 months) compared with their best at any
+        earlier meet, for athletes who also competed in the 12 months before it. No age adjustment.
       </p>
     </div>
   );
