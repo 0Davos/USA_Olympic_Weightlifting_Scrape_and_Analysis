@@ -99,6 +99,11 @@ for window in ("year", "all"):
     lists = (body.get("men", []), body.get("women", [])) if isinstance(body, dict) else ([], [])
     check(f"Q-points rankings ({window}) return 10 men and 10 women", status == 200 and all(len(x) == 10 for x in lists),
           f"{status}, {secs:.1f}s, leaders: {[x[0]['name'] for x in lists if x]}")
+    status, body, secs = fetch("/api/rankings/q-points/distribution", window=window)
+    dists = [body.get(g, {}) for g in ("men", "women")] if isinstance(body, dict) else []
+    check(f"Q-points distribution ({window}) returns bins and 5 cutoffs per gender",
+          status == 200 and len(dists) == 2 and all(d.get("bins") and len(d.get("percentiles", [])) == 5 for d in dists),
+          f"{status}, {secs:.1f}s, athletes: {[d.get('athletes') for d in dists]}")
 
 # ---- one athlete page rendered through the website (the browser flow)
 status, body, secs = fetch("/athlete/" + urllib.parse.quote(name))

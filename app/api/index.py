@@ -179,6 +179,15 @@ def q_points_rankings(response: Response, window: Literal["year", "all"] = "year
     }
 
 
+@app.get("/api/rankings/q-points/distribution")
+def q_points_distribution(response: Response, window: Literal["year", "all"] = "year"):
+    """How every athlete's best Q-points (past year or all time) is spread, per gender: a histogram plus
+    the 25th/50th/75th/90th/99th percentile cutoffs, for the charts under the top 10s."""
+    dist = with_cursor(lambda cur: _rankings.compute_distribution(cur, window == "all", NAME_KEY_SQL))
+    response.headers["Cache-Control"] = "public, s-maxage=3600, stale-while-revalidate=86400"
+    return {"window": window, "men": dist["Men"], "women": dist["Women"]}
+
+
 @app.get("/api/athletes/predict")
 def ath_predict(
     name: str = Query(..., min_length=1, max_length=150),

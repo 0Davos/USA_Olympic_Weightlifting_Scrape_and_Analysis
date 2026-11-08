@@ -224,6 +224,34 @@ if ranked["year"] and ranked["all"]:
 r = client.get("/api/rankings/q-points", params={"window": "month"})
 check("rankings: an unknown window -> 422", r.status_code == 422)
 
+# ================= Q-points distribution (the charts under the top 10s)
+dist = {}
+for w in ("year", "all"):
+    r = get("/api/rankings/q-points/distribution", window=w)
+    dist[w] = r.json() if r.status_code == 200 else None
+    check(f"distribution ({w}): 200, with a CDN cache header", r.status_code == 200 and "s-maxage" in r.headers.get("cache-control", ""), str(r.status_code))
+    if dist[w] is None:
+        continue
+    for g in ("men", "women"):
+        d = dist[w][g]
+        los = [b["lo"] for b in d["bins"]]
+        cuts = [p["q_points"] for p in d["percentiles"]]
+        check(f"distribution ({w}, {g}): the bins add up to the athlete count",
+              d["athletes"] > 0 and sum(b["athletes"] for b in d["bins"]) == d["athletes"], f"{d['athletes']:,} athletes")
+        check(f"distribution ({w}, {g}): bins are contiguous, {d['bin_width']} Q-points wide",
+              los == list(range(los[0], los[-1] + d["bin_width"], d["bin_width"])))
+        check(f"distribution ({w}, {g}): 25th/50th/75th/90th/99th cutoffs, rising, inside the range",
+              [p["p"] for p in d["percentiles"]] == [25, 50, 75, 90, 99] and cuts == sorted(cuts)
+              and los[0] <= cuts[0] and cuts[-1] <= los[-1] + d["bin_width"], str(cuts))
+        if ranked.get(w):
+            check(f"distribution ({w}, {g}): the top 10's best score sits at the top of the range",
+                  ranked[w][g][0]["q_points"] <= los[-1] + d["bin_width"])
+if dist["year"] and dist["all"]:
+    check("distribution: all time covers more athletes than the past year",
+          all(dist["all"][g]["athletes"] > dist["year"][g]["athletes"] for g in ("men", "women")))
+r = client.get("/api/rankings/q-points/distribution", params={"window": "month"})
+check("distribution: an unknown window -> 422", r.status_code == 422)
+
 # ================= failure handling: always a clean 503, never a stack trace or a leak
 saved = os.environ.get("SUPABASE_DB_URL")
 os.environ["SUPABASE_DB_URL"] = "postgresql://nobody:wrong@127.0.0.1:1/postgres"

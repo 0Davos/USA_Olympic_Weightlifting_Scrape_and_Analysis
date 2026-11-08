@@ -2,17 +2,46 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { fetchRankings, WINDOW_LABELS, type RankingEntry, type Rankings, type RankingWindow } from "@/lib/rankings";
+import QPointsDistribution from "./QPointsDistribution";
+import {
+  fetchDistributions,
+  fetchRankings,
+  WINDOW_LABELS,
+  type Distributions,
+  type RankingEntry,
+  type Rankings,
+  type RankingWindow,
+} from "@/lib/rankings";
 
 // The outcome of one fetch, tagged with the request it answers (window + retry count), so switching
-// windows never shows the other window's lists, and "loading" is simply "no outcome for this request".
-type Load = { key: string; status: "ready"; data: Rankings } | { key: string; status: "error" };
+// windows never shows the other window's data, and "loading" is simply "no outcome for this request".
+type Load<T> = { key: string; status: "ready"; data: T } | { key: string; status: "error" };
 
 const BOX_CLASS = "rounded-xl border border-black/10 p-6 dark:border-white/10";
 const MUTED_CLASS = "text-sm text-black/50 dark:text-white/50";
+const BAR_CLASS = "inline-block rounded bg-black/5 dark:bg-white/10";
+const ROWS = 10;
 
-function RankingTable({ entries }: { entries: RankingEntry[] }) {
-  if (entries.length === 0) return <p className={`mt-3 ${MUTED_CLASS}`}>No results in this period.</p>;
+// Fetches `fetcher(period)` whenever the period or retry count changes.
+function useLoad<T>(fetcher: (p: RankingWindow, s: AbortSignal) => Promise<T>, period: RankingWindow, attempt: number) {
+  const [load, setLoad] = useState<Load<T> | null>(null);
+  const key = `${period}#${attempt}`;
+  useEffect(() => {
+    const controller = new AbortController();
+    fetcher(period, controller.signal)
+      .then((data) => setLoad({ key, status: "ready", data }))
+      .catch((err) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setLoad({ key, status: "error" });
+      });
+    return () => controller.abort();
+  }, [fetcher, period, key]);
+  return load && load.key === key ? load : null;
+}
+
+// The table is always ROWS rows tall: while loading (or on an error) it shows placeholder rows with the
+// same two-line layout, so the block is exactly the same size before and after the data arrives.
+function RankingTable({ entries }: { entries: RankingEntry[] | null }) {
   return (
     <table className="mt-3 w-full table-fixed text-sm">
       <thead className="text-left text-xs text-black/50 dark:text-white/50">
@@ -24,67 +53,61 @@ function RankingTable({ entries }: { entries: RankingEntry[] }) {
         </tr>
       </thead>
       <tbody>
-        {entries.map((e) => (
-          <tr key={e.name} className="border-t border-black/5 dark:border-white/5">
-            <td className="py-1.5 text-black/50 dark:text-white/50">{e.rank}</td>
-            <td className="truncate py-1.5 pr-2">
-              <Link href={`/athlete/${encodeURIComponent(e.name)}`} className="hover:underline">
-                {e.name}
-              </Link>
-              {/* The meet goes under the name: as its own column it squeezed the names to nothing. */}
-              <div className="truncate text-xs text-black/50 dark:text-white/50" title={e.meet}>
-                {e.meet}
-              </div>
-            </td>
-            <td className="py-1.5 text-right tabular-nums">{e.total}</td>
-            <td className="py-1.5 text-right font-medium tabular-nums">{e.q_points.toFixed(1)}</td>
-          </tr>
-        ))}
+        {entries
+          ? entries.map((e) => (
+              <tr key={e.name} className="border-t border-black/5 dark:border-white/5">
+                <td className="py-1.5 text-black/50 dark:text-white/50">{e.rank}</td>
+                <td className="truncate py-1.5 pr-2">
+                  <Link href={`/athlete/${encodeURIComponent(e.name)}`} className="hover:underline">
+                    {e.name}
+                  </Link>
+                  {/* The meet goes under the name: as its own column it squeezed the names to nothing. */}
+                  <div className="truncate text-xs text-black/50 dark:text-white/50" title={e.meet}>
+                    {e.meet}
+                  </div>
+                </td>
+                <td className="py-1.5 text-right tabular-nums">{e.total}</td>
+                <td className="py-1.5 text-right font-medium tabular-nums">{e.q_points.toFixed(1)}</td>
+              </tr>
+            ))
+          : Array.from({ length: ROWS }, (_, i) => (
+              <tr key={i} className="border-t border-black/5 dark:border-white/5" aria-hidden>
+                <td className="py-1.5 text-black/30 dark:text-white/30">{i + 1}</td>
+                <td className="py-1.5 pr-2">
+                  <div className="flex h-5 items-center"><span className={`${BAR_CLASS} h-3.5 w-2/3`} /></div>
+                  <div className="flex h-4 items-center"><span className={`${BAR_CLASS} h-2.5 w-1/2`} /></div>
+                </td>
+                <td className="py-1.5 text-right"><span className={`${BAR_CLASS} h-3.5 w-8 align-middle`} /></td>
+                <td className="py-1.5 text-right"><span className={`${BAR_CLASS} h-3.5 w-10 align-middle`} /></td>
+              </tr>
+            ))}
       </tbody>
     </table>
+  );
+}
+
+// Shown over the placeholder content (which keeps the box its full size) when a fetch fails.
+function ErrorOverlay({ what, onRetry }: { what: string; onRetry: () => void }) {
+  return (
+    <div className={`absolute inset-0 flex flex-col items-center justify-center gap-3 ${MUTED_CLASS}`}>
+      <span>Couldn&apos;t load the {what} right now.</span>
+      <button type="button" onClick={onRetry} className="rounded-lg border border-black/10 px-3 py-1 dark:border-white/10">
+        Try again
+      </button>
+    </div>
   );
 }
 
 export default function QPointsLists() {
   const [period, setPeriod] = useState<RankingWindow>("year");
   const [attempt, setAttempt] = useState(0);
-  const [load, setLoad] = useState<Load | null>(null);
+  const rankings = useLoad<Rankings>(fetchRankings, period, attempt);
+  const distributions = useLoad<Distributions>(fetchDistributions, period, attempt);
+  const retry = () => setAttempt((a) => a + 1);
 
-  const key = `${period}#${attempt}`;
-
-  useEffect(() => {
-    const controller = new AbortController();
-    fetchRankings(period, controller.signal)
-      .then((data) => setLoad({ key, status: "ready", data }))
-      .catch((err) => {
-        if (err instanceof DOMException && err.name === "AbortError") return;
-        setLoad({ key, status: "error" });
-      });
-    return () => controller.abort();
-  }, [period, key]);
-
-  const current = load && load.key === key ? load : null;
-
-  function body(entries: RankingEntry[] | undefined) {
-    if (!current) return <p className={`mt-3 ${MUTED_CLASS}`}>Loading...</p>;
-    if (current.status === "error") {
-      return (
-        <div className={`mt-3 flex items-center gap-3 ${MUTED_CLASS}`}>
-          <span>Couldn&apos;t load the rankings right now.</span>
-          <button
-            type="button"
-            onClick={() => setAttempt((a) => a + 1)}
-            className="rounded-lg border border-black/10 px-3 py-1 dark:border-white/10"
-          >
-            Try again
-          </button>
-        </div>
-      );
-    }
-    return <RankingTable entries={entries ?? []} />;
-  }
-
-  const data = current?.status === "ready" ? current.data : null;
+  const lists = rankings?.status === "ready" ? rankings.data : null;
+  const dists = distributions?.status === "ready" ? distributions.data : null;
+  const inPeriod = period === "year" ? " in the past year" : "";
 
   return (
     <div>
@@ -105,19 +128,37 @@ export default function QPointsLists() {
           </button>
         ))}
       </div>
+
       <div className="grid gap-6 sm:grid-cols-2">
-        <section className={BOX_CLASS}>
-          <h2 className="text-lg font-semibold">Top Men — Q-points</h2>
-          {body(data?.men)}
-        </section>
-        <section className={BOX_CLASS}>
-          <h2 className="text-lg font-semibold">Top Women — Q-points</h2>
-          {body(data?.women)}
-        </section>
+        {(["men", "women"] as const).map((g) => (
+          <section key={g} className={`relative ${BOX_CLASS}`}>
+            <h2 className="text-lg font-semibold">Top {g === "men" ? "Men" : "Women"} — Q-points</h2>
+            <div className={rankings?.status === "error" ? "invisible" : ""}>
+              <RankingTable entries={lists ? lists[g] : null} />
+              {lists && lists[g].length === 0 && <p className={`mt-3 ${MUTED_CLASS}`}>No results in this period.</p>}
+            </div>
+            {rankings?.status === "error" && <ErrorOverlay what="rankings" onRetry={retry} />}
+          </section>
+        ))}
       </div>
       <p className="mt-3 text-xs text-black/50 dark:text-white/50">
-        Each athlete&apos;s best Q-points result{period === "year" ? " in the past year" : ""}. No age adjustment.
+        Each athlete&apos;s best Q-points result{inPeriod}. No age adjustment.
       </p>
+
+      <div className="mt-6 grid gap-6 sm:grid-cols-2">
+        {(["men", "women"] as const).map((g) => (
+          <section key={g} className={`relative ${BOX_CLASS}`}>
+            <h2 className="text-lg font-semibold">{g === "men" ? "Men" : "Women"} — how Q-points are spread</h2>
+            <p className={`mt-1 text-xs text-black/50 dark:text-white/50 ${dists ? "" : "invisible"}`}>
+              {dists ? dists[g].athletes.toLocaleString() : "00,000"} athletes&apos; best results{inPeriod}
+            </p>
+            <div className={`mt-3 ${distributions?.status === "error" ? "invisible" : ""}`}>
+              <QPointsDistribution data={dists ? dists[g] : null} id={g} />
+            </div>
+            {distributions?.status === "error" && <ErrorOverlay what="chart" onRetry={retry} />}
+          </section>
+        ))}
+      </div>
     </div>
   );
 }
