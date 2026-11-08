@@ -8,6 +8,8 @@ from dotenv import load_dotenv
 import pandas as pd
 from sqlalchemy import create_engine, text
 
+from takedown import drop_listed, is_listed, load_hashes
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 FEATURES_CSV_PATH = os.path.join(SCRIPT_DIR, "..", "data", "meet_results_FEATURES.csv")
 
@@ -62,6 +64,20 @@ def backup_live_table(conn, table=TABLE_NAME, backup=BACKUP_TABLE_NAME):
     return live_rows
 
 
+def delete_listed_rows(conn, hashes, table):
+    """Deletes takedown-listed athletes' rows from `table` (used on the backup, which is a copy of the
+    previous run's data and so can still hold someone added to the list since). Names are hashed here
+    in Python, the same way as everywhere else, rather than reimplemented in SQL.
+    Returns the number of rows deleted."""
+    if not hashes:
+        return 0
+    names = [r[0] for r in conn.execute(text(f'SELECT DISTINCT name FROM "{table}"'))]
+    listed = [n for n in names if is_listed(n, hashes)]
+    if not listed:
+        return 0
+    return conn.execute(text(f'DELETE FROM "{table}" WHERE name = ANY(:names)'), {"names": listed}).rowcount
+
+
 def load_to_supabase():
     db_url = os.environ.get("SUPABASE_DB_URL")
     if not db_url:
@@ -71,13 +87,23 @@ def load_to_supabase():
     df = pd.read_csv(FEATURES_CSV_PATH)
     df = df[list(COLUMN_MAP.keys())].rename(columns=COLUMN_MAP)
 
+    # meet_clean.py already drops takedown-listed athletes; checked again here because this is the
+    # last step before the public site, and a local run could be using an older FEATURES file.
+    hashes = load_hashes()
+    df, n_removed = drop_listed(df, name_col="name", hashes=hashes)
+    if n_removed:
+        print(f"Takedown list: dropped {n_removed} rows")
+
     engine = create_engine(db_url)
     with engine.begin() as conn:
         # The table was created before bombed_out existed; to_sql(append) won't add
         # a missing column, so make sure it's there (no-op once it is).
         conn.execute(text(f'ALTER TABLE "{TABLE_NAME}" ADD COLUMN IF NOT EXISTS bombed_out boolean'))
 
-        backup_live_table(conn)
+        if backup_live_table(conn) is not None:
+            n_deleted = delete_listed_rows(conn, hashes, BACKUP_TABLE_NAME)
+            if n_deleted:
+                print(f"Takedown list: deleted {n_deleted} rows from '{BACKUP_TABLE_NAME}'")
 
         conn.execute(text(f'TRUNCATE TABLE "{TABLE_NAME}"'))
         df.to_sql(TABLE_NAME, conn, if_exists='append', index=False, method='multi', chunksize=5000)

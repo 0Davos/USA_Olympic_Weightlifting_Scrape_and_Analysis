@@ -1,0 +1,3 @@
+# Athletes removed at their request. Manage this file with transform/takedown.py, not by hand.
+# One line per name: the SHA-256 hash of the normalized name (trimmed, whitespace collapsed,
+# lowercased), so the names themselves aren't published in this public repository.
