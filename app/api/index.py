@@ -34,6 +34,13 @@ MAX_PREDICT_DAYS_AHEAD = 365
 # Same range the page's bodyweight input allows.
 MIN_BODYWEIGHT, MAX_BODYWEIGHT = 0.1, 299.9
 
+# The data only changes when the weekly reload runs, so successful reads can be reused for an hour: by
+# the visitor's browser (max-age) and by Vercel's CDN for everyone (s-maxage), which may also serve a
+# stale copy for up to a day while it refetches in the background. An hour, not a week, because a
+# browser's copy can't be cleared from our side: a takedown or a late refresh shows within about an hour.
+# Errors (404/422/503) are raised as exceptions, so they never carry this header.
+CACHE_FOR_AN_HOUR = "public, max-age=3600, s-maxage=3600, stale-while-revalidate=86400"
+
 # Athletes are identified by name only, and the source has spelling noise (stray double
 # spaces, inconsistent capitalisation), so both endpoints match on a normalized key:
 # trimmed, whitespace collapsed, lowercased. NAME_DISPLAY_SQL is the same minus the
@@ -101,10 +108,11 @@ def health():
 
 
 @app.get("/api/athletes/search")
-def ath_group_find(q: str = Query(..., min_length=1, max_length=100)):
+def ath_group_find(response: Response, q: str = Query(..., min_length=1, max_length=100)):
     """Prefix search: up to 10 unique athlete names starting with `q`, alphabetical.
     Case-insensitive and whitespace-insensitive; names that differ only in case/spacing
     come back once, using their most common spelling."""
+    response.headers["Cache-Control"] = CACHE_FOR_AN_HOUR
     key = normalize(q)
     if not key:
         return {"query": q, "names": []}
@@ -132,7 +140,7 @@ def ath_group_find(q: str = Query(..., min_length=1, max_length=100)):
 
 
 @app.get("/api/athletes/history")
-def ath_indv_find(name: str = Query(..., min_length=1, max_length=150)):
+def ath_indv_find(response: Response, name: str = Query(..., min_length=1, max_length=150)):
     """Full meet history for one athlete, oldest first (meets with an unknown date last).
     Athletes are grouped by name only, so two different people sharing a name are merged.
     Missed attempts come back as null; bomb-outs are included with bombed_out=true."""
@@ -152,6 +160,7 @@ def ath_indv_find(name: str = Query(..., min_length=1, max_length=150)):
         raise HTTPException(status_code=404, detail="Athlete not found")
 
     results = [to_json_row({k: v for k, v in r.items() if k != "name"}) for r in rows]
+    response.headers["Cache-Control"] = CACHE_FOR_AN_HOUR
     return {"name": pick_display_name(rows), "count": len(results), "results": results}
 
 
@@ -163,9 +172,7 @@ def q_points_rankings(response: Response, window: Literal["year", "all"] = "year
     lists = with_cursor(
         lambda cur: _rankings.compute_rankings(cur, window == "all", normalize, NAME_KEY_SQL, NAME_DISPLAY_SQL)
     )
-    # The data only changes when the weekly reload runs: let Vercel's CDN serve this for an hour (and a
-    # stale copy for up to a day while it refetches), so most visitors never wait on the database.
-    response.headers["Cache-Control"] = "public, s-maxage=3600, stale-while-revalidate=86400"
+    response.headers["Cache-Control"] = CACHE_FOR_AN_HOUR
 
     def entry(r: dict) -> dict:
         out = to_json_row(r)
@@ -184,7 +191,7 @@ def q_points_distribution(response: Response, window: Literal["year", "all"] = "
     """How every athlete's best Q-points (past year or all time) is spread, per gender: a histogram plus
     the 25th/50th/75th/90th/99th percentile cutoffs, for the charts under the top 10s."""
     dist = with_cursor(lambda cur: _rankings.compute_distribution(cur, window == "all", NAME_KEY_SQL))
-    response.headers["Cache-Control"] = "public, s-maxage=3600, stale-while-revalidate=86400"
+    response.headers["Cache-Control"] = CACHE_FOR_AN_HOUR
     return {"window": window, "men": dist["Men"], "women": dist["Women"]}
 
 
