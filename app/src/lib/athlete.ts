@@ -34,14 +34,21 @@ export type MarkerShape = "circle" | "square" | "diamond";
 // greens, then blues/purples - so the page's own athlete shares the warm family with its prediction
 // bands. Orange and green are hard to tell apart with red-green colour blindness (the dataviz palette
 // validator passes them only with a second cue), so each athlete also gets its own marker shape.
-export const ATHLETE_STYLES: { color: string; shape: MarkerShape }[] = [
-  { color: "#ea580c", shape: "circle" },
-  { color: "#16a34a", shape: "square" },
-  { color: "#7c3aed", shape: "diamond" },
+// Each athlete's prediction bands use the same family: a darker outer band (1st-25th and 75th-99th
+// percentile) and a lighter inner one (25th-75th). The page's own athlete keeps the original red/orange.
+export type AthleteStyle = { color: string; shape: MarkerShape; bandOuter: string; bandInner: string };
+export const ATHLETE_STYLES: AthleteStyle[] = [
+  { color: "#ea580c", shape: "circle", bandOuter: "#ef4444", bandInner: "#f97316" },
+  { color: "#16a34a", shape: "square", bandOuter: "#15803d", bandInner: "#4ade80" },
+  { color: "#7c3aed", shape: "diamond", bandOuter: "#6d28d9", bandInner: "#60a5fa" },
 ];
 export const MAX_COMPARED = ATHLETE_STYLES.length - 1;
 
-export type GraphSeries = { name: string; rows: Meet[]; color: string; shape: MarkerShape };
+export type GraphSeries = { name: string; rows: Meet[] } & AthleteStyle;
+
+// One athlete's prediction as the graph draws it: bands from originTotal (their latest meet's total, or
+// their last real one if that meet was a bomb-out) out to the predicted meet, in their colour family.
+export type GraphPrediction = { name: string; prediction: Prediction; originTotal: number } & AthleteStyle;
 
 // Resolves to null when the API says the athlete doesn't exist; throws on any other failure.
 export async function fetchHistory(name: string, signal: AbortSignal): Promise<AthleteHistory | null> {
@@ -61,11 +68,19 @@ export function filterByDateRange(results: Meet[], from: string, to: string): Me
 
 // ---- prediction
 
-// Keep in step with MAX_PREDICT_DAYS_AHEAD, MIN_BODYWEIGHT and MAX_BODYWEIGHT in app/api/index.py
-// (the API enforces them either way; these just let the page explain them before asking).
+// Keep in step with MAX_PREDICT_DAYS_AHEAD in app/api/index.py (the API enforces it either way; this just
+// lets the page explain it before asking).
 export const MAX_PREDICT_DAYS_AHEAD = 365;
-export const MIN_BODYWEIGHT = 0.1;
-export const MAX_BODYWEIGHT = 299.9;
+
+// The bodyweight a prediction is made at: the athlete's last recorded one (the model barely responds to
+// bodyweight, so the page no longer asks for it - removed 2026-11-08). Null if none is on record.
+export function lastBodyweight(results: Meet[]): number | null {
+  for (let i = results.length - 1; i >= 0; i--) {
+    const r = results[i];
+    if (r.date && r.bodyweight != null && r.bodyweight > 0) return r.bodyweight;
+  }
+  return null;
+}
 
 export type Prediction = {
   name: string;
