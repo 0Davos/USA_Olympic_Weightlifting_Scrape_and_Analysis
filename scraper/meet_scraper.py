@@ -3,6 +3,7 @@ Owen Davis
 Meet Scraping Script
 '''
 import os
+import sys
 import argparse
 import base64
 import json
@@ -14,6 +15,9 @@ from dotenv import load_dotenv
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CSV_PATH = os.path.join(SCRIPT_DIR, "..", "data", "meet_results.csv")
+
+sys.path.insert(0, os.path.join(SCRIPT_DIR, "..", "transform"))
+from takedown import drop_listed  # noqa: E402  (athletes who asked to be removed: data/takedown_list.txt)
 
 
 def parse_mixed_format_dates(date_series):
@@ -389,6 +393,10 @@ def scrape_meets(code_file=None):
             print(f"After deduplication: {len(deduped_data)} unique rows")
 
             new_df = pd.DataFrame(deduped_data)
+            # Never store new rows for athletes who asked to be removed.
+            new_df, n_listed = drop_listed(new_df)
+            if n_listed:
+                print(f"Takedown list: skipped {n_listed} rows")
             file_exists = os.path.exists(CSV_PATH) and os.path.getsize(CSV_PATH) > 0
 
             if file_exists:

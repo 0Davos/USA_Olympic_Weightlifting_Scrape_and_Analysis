@@ -5,6 +5,8 @@ import re
 import numpy as np
 import pandas as pd
 
+from takedown import drop_listed
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 RAW_CSV_PATH = os.path.join(SCRIPT_DIR, "..", "data", "meet_results.csv")
 CLEANED_CSV_PATH = os.path.join(SCRIPT_DIR, "..", "data", "meet_results_CLEANED.csv")
@@ -102,6 +104,12 @@ def parse_weight_categories(df):
 
 
 def clean_meet_data(df):
+    # Athletes who asked to be removed (data/takedown_list.txt, see transform/takedown.py) never
+    # reach the cleaned data, so nothing downstream - features, models, the website - sees them.
+    df, n_removed = drop_listed(df)
+    if n_removed:
+        print(f"Takedown list: dropped {n_removed} rows")
+
     df = parse_weight_categories(df)
 
     # Drop WC_BW (redundant with Weight Category), rename to friendlier names

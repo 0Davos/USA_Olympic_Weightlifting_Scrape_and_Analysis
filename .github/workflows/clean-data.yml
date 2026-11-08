@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - 'data/meet_results.csv'
+      - 'data/takedown_list.txt'   # a removal request rebuilds the site's table without that athlete
+      - 'transform/takedown.py'
   workflow_dispatch:
 
 jobs:
