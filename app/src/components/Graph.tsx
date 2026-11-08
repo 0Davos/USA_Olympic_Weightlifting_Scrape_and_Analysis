@@ -20,6 +20,7 @@ type Point = {
   date: string;
   meet: string;
   bodyweight: number | null;
+  bombedOut: boolean;
 };
 
 // A dot at the chosen date, one per band edge. `hidden` is the bands' starting point: it's never drawn,
@@ -37,6 +38,8 @@ type Quantile = keyof Prediction["prediction"];
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const X_PADDING_MS = 30 * DAY_MS; // keeps a lone point (and the end points) off the axis edges
+// While a prediction is shown, only this much history before the latest meet is plotted.
+const ZOOM_WINDOW_MS = 365 * DAY_MS;
 const DOT_COLOR = "#2563eb";
 
 // The prediction bands, outermost first: each runs between two neighbouring percentiles.
@@ -150,7 +153,7 @@ export default function Graph({
       // whichever lift was bombed); if the other lift was made, that real value is plotted instead.
       const value = r[field] ?? (r.bombed_out ? 0 : null);
       if (value == null) return [];
-      return [{ kind: "meet" as const, t: Date.parse(r.date), value, date: r.date, meet: r.meet, bodyweight: r.bodyweight }];
+      return [{ kind: "meet" as const, t: Date.parse(r.date), value, date: r.date, meet: r.meet, bodyweight: r.bodyweight, bombedOut: r.bombed_out }];
     })
     .sort((a, b) => a.t - b.t);
 
@@ -169,7 +172,27 @@ export default function Graph({
           })),
         ]
       : [];
-  const ceiling = showPrediction ? prediction.prediction.q99 : 0;
+
+  // While a prediction is shown the graph zooms in on it, or the bands would be a sliver of a whole
+  // career: only the 12 months before the latest meet are plotted (inside whatever date range is set),
+  // bomb-outs are left out so the y-axis needn't reach 0, and the y-axis fits those meets and the bands.
+  // Otherwise the y-axis starts at 0.
+  let plotted = points;
+  let yDomain: [number, number | ((max: number) => number)] = [0, (max: number) => Math.ceil(max / 10) * 10];
+  let yTicks: number[] | undefined; // round-number ticks for the zoomed axis (Recharts' own land on e.g. 329, 338)
+  if (showPrediction) {
+    const windowStart = Date.parse(prediction.latest_meet.date) - ZOOM_WINDOW_MS;
+    plotted = points.filter((p) => p.t >= windowStart && !p.bombedOut);
+    const q = prediction.prediction;
+    const values = [...plotted.map((p) => p.value), originTotal, q.q25, q.q99];
+    const min = Math.min(...values) - 2;
+    const max = Math.max(...values) + 2;
+    const step = [5, 10, 20, 25, 50, 100].find((s) => (max - min) / s <= 6) ?? 100;
+    const lo = Math.max(0, Math.floor(min / step) * step);
+    const hi = Math.ceil(max / step) * step;
+    yDomain = [lo, hi];
+    yTicks = Array.from({ length: Math.round((hi - lo) / step) + 1 }, (_, i) => lo + i * step);
+  }
 
   const undated = rows.filter((r) => !r.date).length;
 
@@ -187,6 +210,7 @@ export default function Graph({
             <span className="inline-block w-3 border-t-2 border-dashed border-current" />
             median
           </span>
+          <span className="text-black/45 dark:text-white/45">Zoomed to the 12 months before the latest meet; bomb-outs hidden</span>
         </p>
       )}
       <div className="h-80 rounded-xl border border-black/10 p-3 text-black/60 dark:border-white/10 dark:text-white/60">
@@ -210,7 +234,8 @@ export default function Graph({
                 dataKey="value"
                 type="number"
                 name={metric}
-                domain={[0, (max: number) => Math.ceil(Math.max(max, ceiling) / 10) * 10]}
+                domain={yDomain}
+                ticks={yTicks}
                 width={44}
                 tick={{ fill: "currentColor", fontSize: 12 }}
                 stroke="currentColor"
@@ -227,7 +252,7 @@ export default function Graph({
                 )}
               />
               {showPrediction && <PredictionBands prediction={prediction} originTotal={originTotal} />}
-              <Scatter data={points} fill={DOT_COLOR} isAnimationActive={false} />
+              <Scatter data={plotted} fill={DOT_COLOR} isAnimationActive={false} />
               {showPrediction && (
                 <Scatter
                   data={predictionPoints}
