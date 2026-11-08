@@ -292,3 +292,45 @@ def ath_predict(
         "meets_used": len(history),
         "assumes_no_bomb_out": True,
     }
+
+# ---- athlete counts (the two bar charts at the bottom of the home page)
+
+# The USAW records effectively start in 2012: about 150 athletes have a "first meet" before that, on
+# impossible dates (1905, 1958, ...), so the new-athletes chart starts here and leaves those out. 2012
+# itself also counts everyone who was already competing when the records begin.
+STATS_FIRST_YEAR = 2012
+# The meets-per-athlete chart has one bar per count up to this; athletes with more are reported as a number.
+STATS_MAX_MEETS_BAR = 30
+
+
+@app.get("/api/stats/athletes")
+def athlete_stats(response: Response):
+    """New athletes per year (each athlete counted in the year of their first dated meet) and how many
+    athletes have attended each number of meets, all time. Athletes are name keys, as everywhere on the
+    site; a meet is a distinct (meet, date), bomb-outs included. One pass over the table."""
+    rows = run_query(f"""
+        WITH athletes AS (
+            SELECT {NAME_KEY_SQL} AS key, min(date) AS first,
+                   count(DISTINCT (lower(regexp_replace(btrim(meet), '\\s+', ' ', 'g')), date)) AS meets
+            FROM meet_results
+            WHERE date IS NULL OR date <= current_date
+            GROUP BY 1
+        )
+        SELECT 'year' AS kind, extract(year FROM first)::int AS value, count(*) AS athletes, NULL::int AS most
+        FROM athletes WHERE first IS NOT NULL GROUP BY 2
+        UNION ALL
+        SELECT 'meets', meets::int, count(*), NULL FROM athletes GROUP BY 2
+    """, {})
+    response.headers["Cache-Control"] = CACHE_FOR_AN_HOUR
+    by_year = {r["value"]: r["athletes"] for r in rows if r["kind"] == "year"}
+    by_meets = {r["value"]: r["athletes"] for r in rows if r["kind"] == "meets"}
+    more = [m for m in by_meets if m > STATS_MAX_MEETS_BAR]
+    return {
+        "new_per_year": [{"year": y, "athletes": by_year.get(y, 0)}
+                         for y in range(STATS_FIRST_YEAR, date.today().year + 1)],
+        "current_year": date.today().year,
+        "meets_per_athlete": [{"meets": m, "athletes": by_meets.get(m, 0)}
+                              for m in range(1, STATS_MAX_MEETS_BAR + 1)],
+        "more_meets": {"athletes": sum(by_meets[m] for m in more), "most": max(more, default=None)},
+        "athletes": sum(by_meets.values()),
+    }

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import AthleteStatsCharts from "@/components/AthleteStatsCharts";
 import FastestImprovers from "@/components/FastestImprovers";
 import QPointsLists from "@/components/QPointsLists";
 import TopBar from "@/components/TopBar";
@@ -11,6 +12,7 @@ export default function Home() {
       <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-10">
         <QPointsLists />
         <FastestImprovers />
+        <AthleteStatsCharts />
       </main>
 
       <footer className="border-t border-black/10 px-4 py-6 dark:border-white/10">
