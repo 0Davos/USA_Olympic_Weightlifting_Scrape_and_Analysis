@@ -184,6 +184,46 @@ if variants:
     a, b2 = (predict(v, max(today, latest_of(v)) + timedelta(days=60)) for v in variants[:2])
     check("spelling variants give identical predictions", a.status_code == 200 and a.json()["prediction"] == b2.json()["prediction"])
 
+# ================= Q-points rankings (home page top 10s)
+import _rankings  # noqa: E402
+
+ranked = {}
+for w in ("year", "all"):
+    r = get("/api/rankings/q-points", window=w)
+    ranked[w] = r.json() if r.status_code == 200 else None
+    check(f"rankings ({w}): 200, with a CDN cache header", r.status_code == 200 and "s-maxage" in r.headers.get("cache-control", ""), str(r.status_code))
+    if ranked[w] is None:
+        continue
+    for g, gender in (("men", "Men"), ("women", "Women")):
+        rows = ranked[w][g]
+        scores = [x["q_points"] for x in rows]
+        check(f"rankings ({w}, {g}): 10 rows ranked 1-10, best first",
+              [x["rank"] for x in rows] == list(range(1, 11)) and scores == sorted(scores, reverse=True), str(scores))
+        check(f"rankings ({w}, {g}): one row per athlete", len({index.normalize(x["name"]) for x in rows}) == len(rows))
+        check(f"rankings ({w}, {g}): Q-points match the Python formula",
+              all(abs(_rankings.q_points(x["total"], x["bodyweight"], gender) - x["q_points"]) <= 0.051 for x in rows))
+        check(f"rankings ({w}, {g}): nothing below the bodyweight floor",
+              all(x["bodyweight"] >= _rankings.MIN_BODYWEIGHT[gender] for x in rows))
+cutoff = (today - timedelta(days=366)).isoformat()
+if ranked["year"]:
+    check("rankings (year): every result is from the past year",
+          all(x["date"] and x["date"] >= cutoff for g in ("men", "women") for x in ranked["year"][g]))
+if ranked["year"] and ranked["all"]:
+    check("rankings: the all-time leaders score at least as high as the past year's",
+          all(ranked["all"][g][0]["q_points"] >= ranked["year"][g][0]["q_points"] for g in ("men", "women")))
+    # Excluding the all-time women's leader's result by hand must drop it from the list.
+    lead = ranked["all"]["women"][0]
+    saved_excluded = _rankings.EXCLUDED_RESULTS
+    _rankings.EXCLUDED_RESULTS = [(lead["name"], lead["meet"], lead["date"], lead["total"], "check")]
+    r = get("/api/rankings/q-points", window="all")
+    _rankings.EXCLUDED_RESULTS = saved_excluded
+    after = r.json()["women"] if r.status_code == 200 else []
+    check("rankings: a result on the exclusion list drops out",
+          bool(after) and not any(x["name"] == lead["name"] and x["meet"] == lead["meet"] and x["date"] == lead["date"] for x in after),
+          f"{lead['name']} at {lead['meet']}")
+r = client.get("/api/rankings/q-points", params={"window": "month"})
+check("rankings: an unknown window -> 422", r.status_code == 422)
+
 # ================= failure handling: always a clean 503, never a stack trace or a leak
 saved = os.environ.get("SUPABASE_DB_URL")
 os.environ["SUPABASE_DB_URL"] = "postgresql://nobody:wrong@127.0.0.1:1/postgres"

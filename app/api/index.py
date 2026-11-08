@@ -6,10 +6,13 @@ from contextlib import closing
 from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
+from typing import Literal
 
 import psycopg2
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Response
 from psycopg2.extras import RealDictCursor
+
+import _rankings
 
 try:
     # Local dev only - on Vercel SUPABASE_DB_URL comes from the project's environment variables.
@@ -55,16 +58,24 @@ def get_connection():
     return conn
 
 
-def run_query(sql: str, params: tuple) -> list[dict]:
-    # One short-lived connection per request: no pool to manage in a serverless function.
+def with_cursor(work):
+    """Runs work(cursor) on one short-lived connection (no pool to manage in a serverless function);
+    a database failure becomes a generic 503."""
     try:
         with closing(get_connection()) as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SET statement_timeout = 5000")
-            cur.execute(sql, params)
-            return cur.fetchall()
+            return work(cur)
     except psycopg2.Error:
         logger.exception("database query failed")
         raise HTTPException(status_code=503, detail="Database unavailable")
+
+
+def run_query(sql: str, params: tuple | dict) -> list[dict]:
+    def work(cur):
+        cur.execute(sql, params)
+        return cur.fetchall()
+
+    return with_cursor(work)
 
 
 def to_json_row(row: dict) -> dict:
@@ -142,6 +153,30 @@ def ath_indv_find(name: str = Query(..., min_length=1, max_length=150)):
 
     results = [to_json_row({k: v for k, v in r.items() if k != "name"}) for r in rows]
     return {"name": pick_display_name(rows), "count": len(results), "results": results}
+
+
+@app.get("/api/rankings/q-points")
+def q_points_rankings(response: Response, window: Literal["year", "all"] = "year"):
+    """Top 10 men and top 10 women by Q-points, one row per athlete (their best result), over the past
+    year or all time. Bomb-outs, very light bodyweights, implausible results (including a total far above
+    the athlete's best elsewhere) and results excluded by hand are left out (see _rankings.py)."""
+    lists = with_cursor(
+        lambda cur: _rankings.compute_rankings(cur, window == "all", normalize, NAME_KEY_SQL, NAME_DISPLAY_SQL)
+    )
+    # The data only changes when the weekly reload runs: let Vercel's CDN serve this for an hour (and a
+    # stale copy for up to a day while it refetches), so most visitors never wait on the database.
+    response.headers["Cache-Control"] = "public, s-maxage=3600, stale-while-revalidate=86400"
+
+    def entry(r: dict) -> dict:
+        out = to_json_row(r)
+        out["q_points"] = round(out["q_points"], 1)
+        return out
+
+    return {
+        "window": window,
+        "men": [entry(r) for r in lists["Men"]],
+        "women": [entry(r) for r in lists["Women"]],
+    }
 
 
 @app.get("/api/athletes/predict")
