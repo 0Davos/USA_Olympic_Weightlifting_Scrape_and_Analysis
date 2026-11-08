@@ -4,7 +4,7 @@ import { CONTACT_EMAIL, SITE_NAME } from "@/lib/site";
 
 export const metadata: Metadata = { title: "Privacy Policy" };
 
-const LAST_UPDATED = "November 7, 2026";
+const LAST_UPDATED = "November 8, 2026";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -42,27 +42,6 @@ export default function PrivacyPage() {
           <p>
             {SITE_NAME} is an independent project. It is not affiliated with, endorsed by, or sponsored by USA
             Weightlifting. You can reach us at <Email />.
-          </p>
-        </Section>
-
-        <Section title="Competition results we publish">
-          <p>
-            The site publishes weightlifting competition results: an athlete&apos;s name, the meet and its date,
-            the weight category they competed in (which can include age-group and gender categories), their
-            bodyweight at weigh-in, their lift attempts, best snatch, best clean &amp; jerk, and total. This
-            information comes from competition results published by USA Weightlifting.
-          </p>
-          <p>
-            Some athletes in the results were under 18 when they competed. The site does not collect
-            information from children, has no accounts, and does not knowingly collect any personal information
-            from visitors of any age. If you are an athlete, or the parent or guardian of one, you can ask for
-            results to be corrected or removed (see &ldquo;Corrections and removal requests&rdquo; below).
-          </p>
-          <p>
-            Results are matched to athletes by name only. Two different people with the same name may appear
-            together, and one person may appear under different spellings. The site also shows statistical
-            estimates of an athlete&apos;s next total. These are statistical estimates, not guarantees, and they
-            assume the athlete does not bomb out.
           </p>
         </Section>
 
