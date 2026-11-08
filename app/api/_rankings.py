@@ -269,10 +269,18 @@ def compute_distribution(cur, all_time: bool, name_key_sql: str) -> dict:
 
 # ---- fastest improvers (the tables at the bottom of the home page)
 
-# Decided with the user 2026-11-08: an athlete's gain is the Q-points of their latest meet minus their best
-# Q-points in the 12 months before that meet, and the latest meet must be within the past 12 months. Only
-# athletes with a result in both are ranked, and only gains above 0.
-IMPROVER_CANDIDATES = 40
+# Decided with the user 2026-11-08: an athlete's gain is the Q-points of their latest meet (within the past
+# 12 months) minus their best Q-points at ANY earlier meet, so only a new career best counts. They must also
+# have competed in the 12 months before that latest meet, so the list is about recent improvement. The first
+# version compared against the best of those 12 months only, and its top 10s filled up with lifters back from
+# a break (a low first meet back, then their old level) and lifters whose earlier meet was an online
+# qualifier, where people post a qualifying total rather than a max.
+IMPROVER_CANDIDATES = 60
+
+# Two people sharing a name show up as bodyweight jumps: an athlete whose bodyweight changes by more than
+# this fraction between two meets less than MERGE_MAX_GAP_DAYS apart is left out of the improvers.
+MERGE_BODYWEIGHT_CHANGE = 0.25
+MERGE_MAX_GAP_DAYS = 183
 
 
 def _year_before(d):
@@ -281,26 +289,35 @@ def _year_before(d):
     return d.replace(year=d.year - 1) if (d.month, d.day) != (2, 29) else d.replace(year=d.year - 1, day=28)
 
 
+def looks_merged(results: list[dict]) -> bool:
+    """True if one athlete's results (each with "date" and "bodyweight") look like two people: a bodyweight
+    change over MERGE_BODYWEIGHT_CHANGE between meets less than MERGE_MAX_GAP_DAYS apart."""
+    seq = sorted((r for r in results if r["date"] and r["bodyweight"]), key=lambda r: r["date"])
+    return any(abs(b["bodyweight"] - a["bodyweight"]) / a["bodyweight"] > MERGE_BODYWEIGHT_CHANGE
+               and (b["date"] - a["date"]).days < MERGE_MAX_GAP_DAYS for a, b in zip(seq, seq[1:]))
+
+
 def improvers_query(name_key_sql: str) -> str:
-    """Each gender's top %(limit)s athletes by gain under the per-result rules (dated results from the past
-    2 years only: the latest meet is within 1 year and its comparison window 1 year before that).
-    Parameter: limit."""
+    """Each gender's top %(limit)s athletes by gain over their career best, under the per-result rules, among
+    athletes with a meet in the past year. Parameter: limit."""
     return f"""
-        WITH valid AS (
+        WITH recent AS (
+            SELECT DISTINCT {name_key_sql} AS key FROM meet_results
+            WHERE date >= current_date - interval '1 year' AND date <= current_date AND NOT bombed_out
+        ), valid AS (
             SELECT r.gender, {name_key_sql} AS key, r.date, {_q_points_sql()} AS q
-            FROM meet_results r
-            WHERE {_valid_result_sql()}
-              AND r.date >= current_date - interval '2 years' AND r.date <= current_date
+            FROM meet_results r JOIN recent ON recent.key = {name_key_sql}
+            WHERE {_valid_result_sql()} AND r.date IS NOT NULL AND r.date <= current_date
         ), latest AS (
             SELECT DISTINCT ON (gender, key) gender, key, date, q
             FROM valid ORDER BY gender, key, date DESC, q DESC
         ), gains AS (
             SELECT l.gender, l.key, l.q - max(v.q) AS gain
             FROM latest l
-            JOIN valid v ON v.gender = l.gender AND v.key = l.key
-                AND v.date < l.date AND v.date >= l.date - interval '1 year'
+            JOIN valid v ON v.gender = l.gender AND v.key = l.key AND v.date < l.date
             WHERE l.date >= current_date - interval '1 year'
-            GROUP BY l.gender, l.key, l.q
+            GROUP BY l.gender, l.key, l.date, l.q
+            HAVING max(v.date) >= l.date - interval '1 year'
         ), ranked AS (
             SELECT *, row_number() OVER (PARTITION BY gender ORDER BY gain DESC) AS rank FROM gains
         )
@@ -313,11 +330,10 @@ def compute_improvers(cur, normalize, name_key_sql: str, name_display_sql: str) 
     total, q_points, before_q_points, gain), on an open database cursor.
 
     Like compute_rankings: the IMPROVER_CANDIDATES biggest gains per gender under the per-result rules come
-    from SQL, then the jump rule and the hand-kept lists are applied to those athletes' histories here.
-    Unlike the lists this is not proven exact: those rules can also RAISE a gain (by dropping a too-high
-    result from the earlier 12 months), so an athlete just outside the candidates could in principle
-    belong in the top 10. That needs a bad result in exactly that window, and the rules touch about 0.2% of
-    results."""
+    from SQL, then the jump rule, the hand-kept lists and the merged-name check are applied to those
+    athletes' histories here. Unlike the lists this is not proven exact: the jump rule and the hand-kept
+    lists can also RAISE a gain (by dropping a too-high earlier result), so an athlete just outside the
+    candidates could in principle belong in the top 10. The rules touch about 0.2% of results."""
     from datetime import date as _date
 
     excluded, confirmed = _listed(EXCLUDED_RESULTS, normalize), _listed(CONFIRMED_RESULTS, normalize)
@@ -339,6 +355,8 @@ def compute_improvers(cur, normalize, name_key_sql: str, name_display_sql: str) 
         rows = []
         for c in (c for c in cands if c["gender"] == gender):
             results = history.get(c["key"], [])
+            if looks_merged([r for r in results if r["gender"] == gender]):
+                continue
             eligible = []
             for r, jump in zip(results, jump_flags(results)):
                 ident = (r["key"], r["meet_key"], r["date"].isoformat() if r["date"] else None, r["total"])
@@ -352,12 +370,12 @@ def compute_improvers(cur, normalize, name_key_sql: str, name_display_sql: str) 
                 continue
             # their latest meet (the better result if two share that date)
             latest = max(eligible, key=lambda r: (r["date"], r["q_points"]))
-            if latest["date"] < since:
+            earlier = [r for r in eligible if r["date"] < latest["date"]]
+            if latest["date"] < since or not earlier or max(r["date"] for r in earlier) < _year_before(latest["date"]):
                 continue
-            earlier = [r["q_points"] for r in eligible
-                       if _year_before(latest["date"]) <= r["date"] < latest["date"]]
-            if earlier and latest["q_points"] > max(earlier):
-                rows.append({**latest, "before_q_points": max(earlier), "gain": latest["q_points"] - max(earlier)})
+            before = max(r["q_points"] for r in earlier)
+            if latest["q_points"] > before:
+                rows.append({**latest, "before_q_points": before, "gain": latest["q_points"] - before})
         rows.sort(key=lambda r: (-r["gain"], r["name"]))
         out[gender] = [
             {"rank": i + 1, "name": r["name"], "meet": r["meet"], "date": r["date"],
