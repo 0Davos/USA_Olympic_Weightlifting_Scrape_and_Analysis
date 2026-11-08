@@ -27,8 +27,9 @@ function bandFor(q: number, cutoffs: number[]) {
   return BANDS[i === -1 ? 4 : i];
 }
 
-// The cutoff values and the band key under the chart. `invisible` renders the same text (with placeholder
-// numbers) but hidden, so the loading placeholder wraps onto exactly as many lines as the real thing.
+// The cutoff values under the chart. `invisible` renders the same text (with placeholder numbers) but
+// hidden, so the loading placeholder wraps onto exactly as many lines as the real thing. (The bands' names
+// show on hover; the user removed the colour key below this line, 2026-11-08.)
 function Key({ percentiles, invisible }: { percentiles: Distribution["percentiles"]; invisible?: boolean }) {
   return (
     <div className={invisible ? "invisible" : ""} aria-hidden={invisible}>
@@ -40,14 +41,6 @@ function Key({ percentiles, invisible }: { percentiles: Distribution["percentile
           </span>
         ))}
       </p>
-      <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs text-black/60 dark:text-white/60">
-        {BANDS.map((b) => (
-          <span key={b.label} className="flex items-center gap-1">
-            <span className="inline-block h-2 w-3 rounded-sm" style={{ backgroundColor: b.color }} />
-            {b.label}
-          </span>
-        ))}
-      </div>
     </div>
   );
 }

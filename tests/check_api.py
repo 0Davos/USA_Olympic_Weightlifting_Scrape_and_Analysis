@@ -252,6 +252,21 @@ if dist["year"] and dist["all"]:
 r = client.get("/api/rankings/q-points/distribution", params={"window": "month"})
 check("distribution: an unknown window -> 422", r.status_code == 422)
 
+# ================= caching: successful reads may be reused for an hour, errors never
+for label, url, params in (
+    ("search", "/api/athletes/search", {"q": "a"}),
+    ("history", "/api/athletes/history", {"name": normal}),
+    ("rankings", "/api/rankings/q-points", {"window": "year"}),
+    ("distribution", "/api/rankings/q-points/distribution", {"window": "year"}),
+):
+    r = get(url, **params)
+    cc = r.headers.get("cache-control", "")
+    check(f"caching: {label} may be reused for an hour by browsers and the CDN",
+          r.status_code == 200 and "max-age=3600" in cc and "s-maxage=3600" in cc and "public" in cc, cc)
+r = client.get("/api/athletes/history", params={"name": "Definitely Not An Athlete"})
+check("caching: a 404 is never cached", r.status_code == 404 and "max-age" not in r.headers.get("cache-control", ""),
+      r.headers.get("cache-control", "(none)"))
+
 # ================= failure handling: always a clean 503, never a stack trace or a leak
 saved = os.environ.get("SUPABASE_DB_URL")
 os.environ["SUPABASE_DB_URL"] = "postgresql://nobody:wrong@127.0.0.1:1/postgres"

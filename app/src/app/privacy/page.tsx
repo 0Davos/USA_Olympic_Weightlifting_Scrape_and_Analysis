@@ -61,15 +61,32 @@ export default function PrivacyPage() {
 
         <Section title="Cookies and similar technologies">
           <p>
-            The site does not set cookies and does not use browser storage of its own. It has no analytics,
-            advertising, or social-media trackers, and its fonts are served from the site itself rather than
-            from a third party. If that changes, this page will be updated first.
+            The site does not set cookies. It stores one thing in your browser: whether you chose day or night
+            mode with the button in the header, so the site looks the way you left it next time. That setting
+            stays on your device and is never sent to us. If you never press the button, nothing is stored and
+            the site follows your device&apos;s light or dark setting.
+          </p>
+          <p>
+            To load faster, your browser may keep copies of results it has already downloaded for up to an
+            hour, like it does for most websites.
+          </p>
+          <p>
+            To see how the site is used, we use Vercel Web Analytics, which does not use cookies. For each page
+            view it records the page, the site you came from, your approximate location, and your browser,
+            operating system and device type. Visitors are counted using a code generated from each request
+            that resets every day, so you can&apos;t be followed from one day to the next or across other
+            websites.
+          </p>
+          <p>
+            The site has no advertising or social-media trackers, and its fonts are served from the site itself
+            rather than from a third party. If any of this changes, this page will be updated first.
           </p>
         </Section>
 
         <Section title="Service providers">
           <p>
-            We use Vercel to host the site and Supabase to store the results database. They process information
+            We use Vercel to host the site and measure visits (see above), and Supabase to store the results
+            database. They process information
             on our behalf to run the site, and may keep their own technical logs as described above. We do not
             sell personal information, and we do not share it for advertising.
           </p>

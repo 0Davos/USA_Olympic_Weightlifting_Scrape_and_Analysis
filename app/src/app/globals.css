@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+/* Dark mode follows the data-theme attribute on <html>, not the device setting directly: an inline script
+   in the root layout sets it before the first paint (the visitor's saved choice, else the device setting),
+   and the header's day/night toggle (ThemeToggle) changes it. So every `dark:` class keys off it. */
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
@@ -10,6 +15,7 @@
   --dist-3: #256abf;
   --dist-4: #184f95;
   --dist-5: #0d366b;
+  color-scheme: light;
 }
 
 @theme inline {
@@ -19,17 +25,17 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-    /* On the dark background the top band is the brightest (validated on #0a0a0a). */
-    --dist-1: #184f95;
-    --dist-2: #256abf;
-    --dist-3: #3987e5;
-    --dist-4: #6da7ec;
-    --dist-5: #b7d3f6;
-  }
+:root[data-theme="dark"] {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+  /* On the dark background the top band is the brightest (validated on #0a0a0a). */
+  --dist-1: #184f95;
+  --dist-2: #256abf;
+  --dist-3: #3987e5;
+  --dist-4: #6da7ec;
+  --dist-5: #b7d3f6;
+  /* Native controls (date pickers, scrollbars) follow the site's theme too. */
+  color-scheme: dark;
 }
 
 body {

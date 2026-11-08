@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { SITE_NAME } from "@/lib/site";
+import ThemeToggle from "./ThemeToggle";
 
 const DEBOUNCE_MS = 250;
 
@@ -91,11 +92,14 @@ export default function TopBar() {
   }
 
   return (
-    <header className="sticky top-0 z-50 border-b border-black/10 bg-white/90 backdrop-blur dark:border-white/10 dark:bg-black/90">
+    <header className="sticky top-0 z-50 border-b border-black/10 bg-white/90 backdrop-blur dark:border-white/40 dark:bg-black/90">
       <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-3">
-        <Link href="/" className="text-lg font-semibold tracking-tight">
-          {SITE_NAME}
-        </Link>
+        <div className="flex flex-col items-start gap-0.5">
+          <Link href="/" className="text-xl font-semibold tracking-tight">
+            {SITE_NAME}
+          </Link>
+          <ThemeToggle />
+        </div>
 
         <div ref={containerRef} className="relative w-full max-w-xs">
           <input
