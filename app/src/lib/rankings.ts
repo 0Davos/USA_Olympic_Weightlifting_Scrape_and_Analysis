@@ -33,6 +33,20 @@ export type Distribution = {
 
 export type Distributions = { window: RankingWindow; men: Distribution; women: Distribution };
 
+// ---- fastest improvers (GET /api/rankings/improvers)
+
+// One athlete: their latest meet (within the past 12 months) and how many Q-points it gained over their
+// best in the 12 months before it.
+export type ImproverEntry = RankingEntry & { before_q_points: number; gain: number };
+
+export type Improvers = { men: ImproverEntry[]; women: ImproverEntry[] };
+
+export async function fetchImprovers(signal: AbortSignal): Promise<Improvers> {
+  const res = await fetch("/api/rankings/improvers", { signal });
+  if (!res.ok) throw new Error(`improvers request failed: ${res.status}`);
+  return res.json();
+}
+
 export async function fetchDistributions(window: RankingWindow, signal: AbortSignal): Promise<Distributions> {
   const res = await fetch(`/api/rankings/q-points/distribution?window=${window}`, { signal });
   if (!res.ok) throw new Error(`distribution request failed: ${res.status}`);
