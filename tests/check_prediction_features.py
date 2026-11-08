@@ -30,7 +30,8 @@ import train as T  # noqa: E402  (only for FEATURE_COLS)
 
 FEATURES_CSV = ROOT / "data" / "meet_results_FEATURES.csv"
 ATTENDANCE = {"Bodyweight", "Num Competitions", "Days Since Last Comp", "comps_last_180_days",
-              "avg_days_between_comps", "comp_timing_deviation"}
+              "avg_days_between_comps", "comp_timing_deviation",
+              "prev_division_code", "career_days", "meet_month"}  # model v2: also over every meet
 ATTEMPT_COLS = ["Sn#1", "Sn#2", "Sn#3", "CJ#1", "CJ#2", "CJ#3"]
 ATTEMPT_KEYS = ["sn_1", "sn_2", "sn_3", "cj_1", "cj_2", "cj_3"]
 
@@ -54,11 +55,11 @@ def close(a, b):
 
 
 def main():
-    assert P.FEATURE_COLS == T.FEATURE_COLS, "FEATURE_COLS in app/api/_prediction.py differs from models/train.py"
+    assert P.FEATURE_COLS == T.QUANTILE_FEATURE_COLS, "FEATURE_COLS in app/api/_prediction.py differs from QUANTILE_FEATURE_COLS in models/train.py"
     print("FEATURE_COLS match models/train.py")
 
-    cols = ["Name", "Date", "Bodyweight", "Gender", "Best Sn", "Best CJ", "Total", "bombed_out"] + ATTEMPT_COLS
-    cols += [c for c in T.FEATURE_COLS if c not in cols]
+    cols = ["Name", "Date", "Bodyweight", "Gender", "Best Sn", "Best CJ", "Total", "bombed_out", "Weight Category"] + ATTEMPT_COLS
+    cols += [c for c in T.QUANTILE_FEATURE_COLS if c not in cols]
     df = pd.read_csv(FEATURES_CSV, usecols=cols)
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
 
@@ -89,17 +90,18 @@ def main():
                 "total": none_if_nan(rec["Total"]),
                 "bombed_out": bool(rec["bombed_out"]),
                 "gender": rec["Gender"] if isinstance(rec["Gender"], str) else None,
+                "weight_category": rec["Weight Category"] if isinstance(rec["Weight Category"], str) else None,
                 **{k: none_if_nan(rec[c]) for k, c in zip(ATTEMPT_KEYS, ATTEMPT_COLS)},
             }
-            for rec in g[["Date", "Bodyweight", "Best Sn", "Best CJ", "Total", "bombed_out", "Gender"] + ATTEMPT_COLS].to_dict("records")
+            for rec in g[["Date", "Bodyweight", "Best Sn", "Best CJ", "Total", "bombed_out", "Gender", "Weight Category"] + ATTEMPT_COLS].to_dict("records")
         ]
-        expected = g[T.FEATURE_COLS].to_numpy(dtype=float)
+        expected = g[T.QUANTILE_FEATURE_COLS].to_numpy(dtype=float)
         bombed = g["bombed_out"].to_numpy(dtype=bool)
 
         for i in range(1, len(rows)):
             got = P.next_meet_features(rows[:i], rows[i]["date"], rows[i]["bodyweight"])
             rows_checked += 1
-            for j, col in enumerate(T.FEATURE_COLS):
+            for j, col in enumerate(T.QUANTILE_FEATURE_COLS):
                 if bombed[i] and col not in ATTENDANCE:
                     continue
                 if col == "Gender Binary":
@@ -128,7 +130,7 @@ def main():
           f"({skipped_undated} athletes skipped for having an undated meet)")
     print(f"{'feature':28} {'compared':>9} {'last-digit noise':>17} {'REAL mismatch':>14}")
     total_bad = 0
-    for col in T.FEATURE_COLS:
+    for col in T.QUANTILE_FEATURE_COLS:
         bad = mismatches[col]
         total_bad += bad
         print(f"{col:28} {compared[col]:9,} {noise[col]:17,} {bad:14,}" + ("   <-- DIFFERS" if bad else ""))
@@ -146,7 +148,7 @@ def main():
     import numpy as np
     x_exp = np.nan_to_num(np.array(exp_batch, dtype=float), nan=0.0)
     x_got = np.nan_to_num(np.array(got_batch, dtype=float), nan=0.0)
-    gi = T.FEATURE_COLS.index("Gender Binary")
+    gi = T.QUANTILE_FEATURE_COLS.index("Gender Binary")
     x_got[:, gi] = x_exp[:, gi]
     print(f"\nmodel predictions on {len(x_exp):,} meets, pipeline features vs calculator features:")
     print("  (the few last-digit rounding differences above can tip a tree split the other way; the effect is tiny)")

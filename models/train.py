@@ -59,6 +59,28 @@ CATBOOST_PARAM_GRID = {
 # below it, 50th-75th-99th above). The 1st was added 2026-11-08 to the original four.
 QUANTILES = [0.01, 0.25, 0.50, 0.75, 0.99]
 
+# ---- prediction models (the website's bands), "model v2" since 2026-11-08
+# They predict the CHANGE in total from the athlete's last real (non-bomb-out) total, which the API adds
+# back. Predicting the total itself capped elite lifters near the highest totals seen in training (the
+# top of the bands was too low for them); a change has no such ceiling. They also get three more features
+# known before a meet. Backtest on the 2024+ test meets (48,876, returning athletes), current settings:
+# median error 6.87 -> 6.58kg (vs 8.16kg for "same as last total"); elite (best 330kg+) 99th-percentile
+# coverage 93.4% -> 96.8%. Must equal FEATURE_COLS in app/api/_prediction.py (the API passes features by
+# position; tests/check_prediction_features.py checks they match).
+QUANTILE_FEATURE_COLS = FEATURE_COLS + ['prev_division_code', 'career_days', 'meet_month']
+
+# The settings each percentile's model is trained with: what RandomizedSearchCV picked for the original
+# total-predicting models (2026-09-30; the 1st percentile 2026-11-08), kept for v2. A v2 tuning search was
+# tried 2026-11-08 and not adopted (same accuracy; it widened the elite bands and pulled some elite lifters'
+# 99th percentile below their last total - see ROADMAP.md, model v2).
+QUANTILE_PARAMS = {
+    0.01: dict(learning_rate=0.05, num_leaves=20, max_depth=5, min_child_samples=10, n_estimators=350),
+    0.25: dict(learning_rate=0.07, num_leaves=60, max_depth=7, min_child_samples=30, n_estimators=500),
+    0.50: dict(learning_rate=0.04, num_leaves=60, max_depth=8, min_child_samples=30, n_estimators=450),
+    0.75: dict(learning_rate=0.04, num_leaves=60, max_depth=8, min_child_samples=30, n_estimators=450),
+    0.99: dict(learning_rate=0.07, num_leaves=50, max_depth=6, min_child_samples=30, n_estimators=400),
+}
+
 
 def prepare_train_test(df):
     # Bomb-outs (Total=0) are a different kind of event, not a weak performance -
@@ -177,6 +199,58 @@ def save_serving_model(estimator, q, output_dir=SERVING_MODELS_DIR):
     print(f"Saved quantile {q:.2f} serving model to {filepath}")
 
 
+def prepare_quantile_train_test(df):
+    """Train/test split for the prediction models: same date split as prepare_train_test, but only meets
+    with a last real total to predict a change from (an athlete's first meet has none), and the target is
+    Total - Last Comp Total. Returns train, test, X_train, X_test, y_train (change), y_test (change)."""
+    df = df[~df['bombed_out'] & (df['Last Comp Total'] > 0)]
+    train = df[df['Date'] < '2024-01-01']
+    test = df[df['Date'] >= '2024-01-01']
+    X_train = train[QUANTILE_FEATURE_COLS].fillna(0)
+    X_test = test[QUANTILE_FEATURE_COLS].fillna(0)
+    y_train = train['Total'] - train['Last Comp Total']
+    y_test = test['Total'] - test['Last Comp Total']
+    return train, test, X_train, X_test, y_train, y_test
+
+
+def report_quantile_calibration(quantile_models, test, X_test):
+    """Coverage of each percentile on the test meets (the share of actual totals at or below the predicted
+    one, which should equal the percentile), overall and by athlete level, plus the median's error. The
+    outputs are sorted per row first, as the API does, since independent models can cross."""
+    qs = sorted(quantile_models)
+    last = test['Last Comp Total'].to_numpy()
+    actual = test['Total'].to_numpy()
+    preds = np.sort(np.vstack([last + quantile_models[q].predict(X_test) for q in qs]), axis=0)
+    naive = np.abs(actual - last).mean()
+    print(f"\nPrediction models - calibration on {len(test):,} test meets (naive 'same as last total' error {naive:.2f}kg)")
+    print("-" * 72)
+    for i, q in enumerate(qs):
+        print(f"Quantile {q:.2f} | Target coverage: {q:6.1%} | Actual coverage: {(actual <= preds[i]).mean():6.1%}")
+    if 0.50 in qs:
+        print(f"Median error: {np.abs(actual - preds[qs.index(0.50)]).mean():.2f}kg")
+    levels = pd.cut(test['best_total_to_date'], [0, 200, 250, 300, 330, 10000], right=False,
+                    labels=['<200', '200-250', '250-300', '300-330', '330+']).to_numpy()
+    for lv in ['<200', '200-250', '250-300', '300-330', '330+']:
+        sel = levels == lv
+        cov = ' / '.join(f"{(actual[sel] <= preds[i][sel]).mean():.1%}" for i in range(len(qs)))
+        print(f"  best total {lv:>7} (n={sel.sum():,}): coverage {cov}")
+
+
+def train_lightgbm_quantiles(df, quantiles=QUANTILES, params=QUANTILE_PARAMS):
+    """Trains one LightGBM model per quantile with the given settings (no search), saves them (joblib
+    pickle + the API's text format) and prints the calibration check. Seconds per model, unlike tuning."""
+    train, test, X_train, X_test, y_train, y_test = prepare_quantile_train_test(df)
+    quantile_models = {}
+    for q in quantiles:
+        print(f"Training LightGBM quantile model for q={q} with {params[q]}...")
+        quantile_models[q] = LGBMRegressor(
+            objective='quantile', alpha=q, random_state=42, n_jobs=-1, verbose=-1, **params[q]
+        ).fit(X_train, y_train)
+    save_quantile_models(quantile_models)
+    report_quantile_calibration(quantile_models, test, X_test)
+    return quantile_models
+
+
 def tune_lightgbm_quantiles(df, quantiles=QUANTILES):
     """Tunes one LightGBM model per quantile in `quantiles` (default: all of QUANTILES) via
     RandomizedSearchCV. Scored on pinball loss at that quantile's specific alpha,
@@ -189,7 +263,7 @@ def tune_lightgbm_quantiles(df, quantiles=QUANTILES):
     quantile) if the model is well-calibrated. A coverage far off from its target
     means that quantile's predictions shouldn't be trusted as-is.
     """
-    train, test, X_train, X_test, y_train, y_test = prepare_train_test(df)
+    train, test, X_train, X_test, y_train, y_test = prepare_quantile_train_test(df)
 
     quantile_models = {}
     for q in quantiles:
@@ -213,14 +287,7 @@ def tune_lightgbm_quantiles(df, quantiles=QUANTILES):
         quantile_models[q] = model_tuned
 
     save_quantile_models(quantile_models)
-
-    print("\nLightGBM Quantile Models (Tuned) - Calibration Check:")
-    print("-" * 64)
-    for q, model in quantile_models.items():
-        pred = model.predict(X_test)
-        coverage = (y_test <= pred).mean()
-        print(f"Quantile {q:.2f} | Target coverage: {q:6.1%} | Actual coverage: {coverage:6.1%}")
-
+    report_quantile_calibration(quantile_models, test, X_test)
     return quantile_models
 
 
@@ -319,7 +386,11 @@ if __name__ == '__main__':
 
     train_exact_models = False
     train_quantile_model = True
-    if train_exact_models: 
+    tune_quantile_model = False  # the RandomizedSearchCV search instead: ~20-25 min per percentile
+    if train_exact_models:
         train_all(df)
     if train_quantile_model:
-        tune_lightgbm_quantiles(df)
+        if tune_quantile_model:
+            tune_lightgbm_quantiles(df)
+        else:
+            train_lightgbm_quantiles(df)

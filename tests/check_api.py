@@ -60,7 +60,11 @@ KEY = index.NAME_KEY_SQL
 normal = first(f"""SELECT name FROM meet_results WHERE date IS NOT NULL GROUP BY name
                    HAVING count(*) BETWEEN 4 AND 10 AND max(date) <= current_date AND bool_and(NOT bombed_out)
                    ORDER BY name LIMIT 1""")
-bomber = first("SELECT name FROM meet_results WHERE bombed_out AND date IS NOT NULL ORDER BY name LIMIT 1")
+# an athlete with a bomb-out AND a completed total (the models predict a change from the last one)
+bomber = first(f"""SELECT min(name) FROM meet_results WHERE date IS NOT NULL GROUP BY {KEY}
+                   HAVING bool_or(bombed_out) AND bool_or(NOT bombed_out) ORDER BY min(name) LIMIT 1""")
+only_bombs = first(f"""SELECT min(name) FROM meet_results WHERE date IS NOT NULL GROUP BY {KEY}
+                       HAVING bool_and(bombed_out) ORDER BY min(name) LIMIT 1""")
 undated_only = first("SELECT name FROM meet_results GROUP BY name HAVING bool_and(date IS NULL) ORDER BY name LIMIT 1")
 variants = sql(f"""SELECT array_agg(DISTINCT name) AS names FROM (SELECT {KEY} AS key, name FROM meet_results) t
                    GROUP BY key HAVING count(DISTINCT name) > 1 ORDER BY key LIMIT 1""")
@@ -178,6 +182,10 @@ check("SQL-injection-looking name is just not found", predict("x' OR '1'='1", ta
 if undated_only:
     r = predict(undated_only, today + timedelta(days=30))
     check("an athlete with only undated meets -> 422 with a clear reason", r.status_code == 422 and "no dated meets" in r.json()["detail"], r.json().get("detail", ""))
+if only_bombs:
+    r = predict(only_bombs, max(today, latest_of(only_bombs)) + timedelta(days=30))
+    check("an athlete whose every meet was a bomb-out -> 422 (no total to predict a change from)",
+          r.status_code == 422 and "no completed total" in r.json()["detail"], r.json().get("detail", ""))
 r = predict(bomber, max(today, latest_of(bomber)) + timedelta(days=60))
 check("an athlete with bomb-outs in their history can be predicted", r.status_code == 200, r.text[:120])
 if variants:

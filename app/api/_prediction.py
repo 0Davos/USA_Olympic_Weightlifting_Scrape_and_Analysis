@@ -1,21 +1,25 @@
 """Predict an athlete's total at a future meet.
 
-Rebuilds the 24 features the quantile models were trained on from the athlete's previous meets
+Rebuilds the 27 features the quantile models were trained on from the athlete's previous meets
 plus the chosen meet date and bodyweight, in plain Python (no pandas: it would push the
 deployed function over Vercel's size limit). Every feature mirrors transform/feature_engineering.py
 exactly, quirks included; tests/check_prediction_features.py proves that against the real data.
 If you change one side, change the other and re-run that check.
 
+Since model v2 (2026-11-08) the models predict the CHANGE from the athlete's last real total (their
+latest meet that wasn't a bomb-out); predict_next_meet adds it back (see models/train.py).
+
 The leading underscore keeps Vercel from treating this file (or _models/) as an endpoint.
 """
 
 import math
+import re
 from datetime import date, datetime
 from pathlib import Path
 
 import numpy as np
 
-# Must equal FEATURE_COLS in models/train.py: the models take features positionally, by index.
+# Must equal QUANTILE_FEATURE_COLS in models/train.py: the models take features positionally, by index.
 # (app/ is all that gets deployed, so this can't be imported from models/; the check script asserts they match.)
 FEATURE_COLS = [
     'Bodyweight',
@@ -28,6 +32,7 @@ FEATURE_COLS = [
     'improvement_streak', 'sn_to_cj_ratio', 'sn_improvement_last_3',
     'cj_improvement_last_3', 'comps_last_180_days',
     'avg_days_between_comps', 'comp_timing_deviation',
+    'prev_division_code', 'career_days', 'meet_month',
 ]
 
 MODELS_DIR = Path(__file__).resolve().parent / "_models"
@@ -170,11 +175,33 @@ def _improvement_streak(totals: list[float]) -> float:
     return float(went_up(m) + went_up(m - 1) + went_up(m - 2))
 
 
+def _division_code(weight_category) -> float:
+    """The age division in a weight category as an ordered number - must match division_code in
+    transform/feature_engineering.py: 0 = 11 & Under, 1 = 13 & Under, 2 = 14-15, 3 = 16-17, 4 = Junior,
+    5 = Open, 6+ = Masters by bracket (35-39 = 6, 40-44 = 7, ...); NaN if it can't be read."""
+    s = re.sub(r"^(Men's|Women's)\s*|\s*(Men's|Women's)\s*", " ", str(weight_category))
+    s = re.sub(r"\s*\d+\+?\s*kg\+?$", "", s).strip()
+    if "Under" in s:
+        return 1.0 if s.startswith("13") else 0.0
+    if s.startswith("14-15"):
+        return 2.0
+    if s.startswith("16-17"):
+        return 3.0
+    if s.startswith("Junior"):
+        return 4.0
+    if s.startswith("Open"):
+        return 5.0
+    m = re.match(r"Masters \((\d+)", s)
+    if m:
+        return float(6 + (int(m.group(1)) - 35) // 5)
+    return NAN
+
+
 def next_meet_features(history: list[dict], target_date, target_bodyweight: float) -> list[float]:
-    """The model's 24 features, in FEATURE_COLS order, for a meet on target_date at target_bodyweight.
+    """The model's 27 features, in FEATURE_COLS order, for a meet on target_date at target_bodyweight.
 
     `history` is the athlete's earlier meets as dicts shaped like rows of the meet_results table
-    (date, bodyweight, sn_1..cj_3, best_sn, best_cj, total, bombed_out, gender). Missing values
+    (date, bodyweight, sn_1..cj_3, best_sn, best_cj, total, bombed_out, gender, weight_category). Missing values
     (None or NaN) are left as NaN here; predict_next_meet fills them with 0 exactly as training did.
 
     Two groups, as in the pipeline: performance-history features use only meets that were not
@@ -198,6 +225,10 @@ def next_meet_features(history: list[dict], target_date, target_bodyweight: floa
         f["avg_days_between_comps"] = avg_gap
         f["comp_timing_deviation"] = days_since_last - avg_gap
         f["comps_last_180_days"] = float(sum(1 for d in dates if (target - d).days <= 180))
+        # model v2: the division at their latest meet, career length, and the month
+        f["prev_division_code"] = _division_code(rows[-1].get("weight_category"))
+        f["career_days"] = float((target - dates[0]).days)
+    f["meet_month"] = float(target.month)
 
     # ---- performance history: meets that weren't bomb-outs
     valid = [r for r in rows if not r.get("bombed_out")]
@@ -234,7 +265,12 @@ def next_meet_features(history: list[dict], target_date, target_bodyweight: floa
 
 
 def predict_next_meet(history: list[dict], target_date, target_bodyweight: float) -> dict[str, float]:
-    """Predicted total (kg) at each percentile in QUANTILES for the meet described, keyed "q1" ... "q99"."""
+    """Predicted total (kg) at each percentile in QUANTILES for the meet described, keyed "q1" ... "q99":
+    the athlete's last real total plus the models' predicted change. Raises ValueError if the athlete has
+    no real total to start from (every meet a bomb-out), which the endpoint checks for first."""
     features = next_meet_features(history, target_date, target_bodyweight)
+    last_total = features[FEATURE_COLS.index("Last Comp Total")]
+    if math.isnan(last_total) or last_total <= 0:
+        raise ValueError("no completed total to predict from")
     x = [0.0 if v is None or math.isnan(v) else float(v) for v in features]  # training filled NaN with 0
-    return {f"q{q}": model.predict_one(x) for q, model in get_boosters().items()}
+    return {f"q{q}": last_total + model.predict_one(x) for q, model in get_boosters().items()}
