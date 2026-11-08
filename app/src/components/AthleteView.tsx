@@ -1,20 +1,23 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   addDays,
+  ATHLETE_STYLES,
   fetchHistory,
   fetchPrediction,
   filterByDateRange,
   MAX_BODYWEIGHT,
+  MAX_COMPARED,
   MAX_PREDICT_DAYS_AHEAD,
   MIN_BODYWEIGHT,
   todayISO,
   type AthleteHistory,
+  type GraphSeries,
   type Metric,
   type PredictionResult,
 } from "@/lib/athlete";
-import GraphControls, { type PredictionMessage } from "./GraphControls";
+import GraphControls, { type ComparedChip, type PredictionMessage } from "./GraphControls";
 import Graph from "./Graph";
 import ResultsTable from "./ResultsTable";
 
@@ -29,6 +32,14 @@ type Load =
 // Same idea for predictions: keyed by exactly what was asked, so an answer for an old date or
 // bodyweight is never shown against new inputs.
 type PredictionOutcome = { key: string; result: PredictionResult };
+
+// A compared athlete's history, by the name that was picked.
+type CompareLoad = { status: "ready"; data: AthleteHistory } | { status: "notfound" } | { status: "error" };
+
+// The same key the API matches names on (trimmed, whitespace collapsed, lowercased).
+function nameKey(name: string) {
+  return name.replace(/\s+/g, " ").trim().toLowerCase();
+}
 
 const PLACEHOLDER_CLASS =
   "flex h-80 items-center justify-center rounded-xl border border-black/10 text-sm text-black/50 dark:border-white/10 dark:text-white/50";
@@ -47,6 +58,35 @@ export default function AthleteView({ name }: { name: string }) {
   const [targetDate, setTargetDate] = useState("");
   const [bodyweight, setBodyweight] = useState("");
   const [outcome, setOutcome] = useState<PredictionOutcome | null>(null);
+
+  // Compare: other athletes overlaid on the graph, in the order they were added.
+  const [compareNames, setCompareNames] = useState<string[]>([]);
+  // Each compared athlete keeps the colour/shape slot (1..MAX_COMPARED in ATHLETE_STYLES) they got when
+  // added, so removing one never repaints the other.
+  const [compareSlots, setCompareSlots] = useState<Record<string, number>>({});
+  const [compareLoads, setCompareLoads] = useState<Record<string, CompareLoad>>({});
+  const [compareRetry, setCompareRetry] = useState(0);
+  const compareLoadsRef = useRef(compareLoads);
+  useEffect(() => {
+    compareLoadsRef.current = compareLoads;
+  }, [compareLoads]);
+
+  // Fetch each compared athlete's history once (again after a retry). Reading the loads through a ref
+  // keeps one athlete's answer from cancelling another's request still in flight.
+  useEffect(() => {
+    const missing = compareNames.filter((n) => !(n in compareLoadsRef.current));
+    if (missing.length === 0) return;
+    const controller = new AbortController();
+    for (const n of missing) {
+      fetchHistory(n, controller.signal)
+        .then((data) => setCompareLoads((m) => ({ ...m, [n]: data ? { status: "ready", data } : { status: "notfound" } })))
+        .catch((err) => {
+          if (err instanceof DOMException && err.name === "AbortError") return;
+          setCompareLoads((m) => ({ ...m, [n]: { status: "error" } }));
+        });
+    }
+    return () => controller.abort();
+  }, [compareNames, compareRetry]);
 
   const key = `${name}#${attempt}`;
 
@@ -135,12 +175,66 @@ export default function AthleteView({ name }: { name: string }) {
       // The one place the prediction is described (the no-bomb-out note is in the controls' helper
       // text just above); the bands' values are on the graph's hover.
       const { date, bodyweight, meets_used } = answered.data;
+      // While comparing, say whose prediction it is: only the page's own athlete gets one.
+      const whose = compareNames.length > 0 && history ? `${history.name}: ` : "";
       message = {
         tone: "info",
-        text: `Predicted total for ${date} at ${bodyweight} kg, from ${meets_used} meet${meets_used === 1 ? "" : "s"}.`,
+        text: `${whose}Predicted total for ${date} at ${bodyweight} kg, from ${meets_used} meet${meets_used === 1 ? "" : "s"}.`,
       };
     }
   }
+
+  // ---- compare
+  function addCompare(picked: string) {
+    const k = nameKey(picked);
+    if (k === nameKey(history?.name ?? name)) return; // already the page's athlete
+    if (compareNames.some((n) => nameKey(n) === k) || compareNames.length >= MAX_COMPARED) return;
+    const taken = new Set(Object.values(compareSlots));
+    const slot = Array.from({ length: MAX_COMPARED }, (_, i) => i + 1).find((s) => !taken.has(s)) ?? 1;
+    setCompareNames([...compareNames, picked]);
+    setCompareSlots({ ...compareSlots, [picked]: slot });
+  }
+  function removeCompare(picked: string) {
+    setCompareNames((names) => names.filter((n) => n !== picked));
+    setCompareSlots((slots) => {
+      const rest = { ...slots };
+      delete rest[picked];
+      return rest;
+    });
+  }
+  function retryCompare(picked: string) {
+    setCompareLoads((m) => {
+      const rest = { ...m };
+      delete rest[picked];
+      compareLoadsRef.current = rest; // so the effect sees it as missing straight away
+      return rest;
+    });
+    setCompareRetry((r) => r + 1);
+  }
+
+  const styleOf = (n: string) => ATHLETE_STYLES[compareSlots[n] ?? 1];
+  const comparedChips: ComparedChip[] = compareNames.map((n) => {
+    const l = compareLoads[n];
+    return {
+      name: l?.status === "ready" ? l.data.name : n,
+      ...styleOf(n),
+      status: l ? l.status : "loading",
+    };
+  });
+  // Keep the chip's remove/retry pointed at the name that was picked (the display name can differ).
+  const chipActions = Object.fromEntries(comparedChips.map((c, i) => [c.name, compareNames[i]]));
+
+  const series: GraphSeries[] = history
+    ? [
+        { name: history.name, rows, ...ATHLETE_STYLES[0] },
+        ...compareNames.flatMap((n) => {
+          const l = compareLoads[n];
+          return l?.status === "ready"
+            ? [{ name: l.data.name, rows: filterByDateRange(l.data.results, from, to), ...styleOf(n) }]
+            : [];
+        }),
+      ]
+    : [];
 
   if (!current) return <div className={`mt-6 ${PLACEHOLDER_CLASS}`}>Loading results...</div>;
 
@@ -187,9 +281,13 @@ export default function AthleteView({ name }: { name: string }) {
           minDate={minDate}
           maxDate={maxDate}
           message={message}
+          compared={comparedChips}
+          onCompareAdd={addCompare}
+          onCompareRemove={(shown) => removeCompare(chipActions[shown] ?? shown)}
+          onCompareRetry={(shown) => retryCompare(chipActions[shown] ?? shown)}
         />
         <Graph
-          rows={rows}
+          series={series}
           metric={metric}
           prediction={predictAvailable ? prediction : null}
           originTotal={prediction ? (prediction.latest_meet.bombed_out ? lastRealTotal : prediction.latest_meet.total) : null}

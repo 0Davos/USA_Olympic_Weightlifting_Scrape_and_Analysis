@@ -1,0 +1,161 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+
+const DEBOUNCE_MS = 250;
+
+// The outcome of one search, tagged with the query it answered. The component only shows a
+// result whose query matches what's currently typed, so stale results never flash up and
+// "loading" is simply "no result for the current text yet".
+type SearchResult = { q: string; names: string[]; error: boolean };
+
+// The athlete search box with its suggestions dropdown (debounced, keyboard-navigable), used by the
+// header (to open an athlete's page) and by Compare (to add an athlete to the graph).
+export default function AthleteSearch({
+  onSelect,
+  placeholder = "Search an athlete...",
+  idPrefix,
+  autoFocus = false,
+  onEscape,
+  className = "",
+}: {
+  onSelect: (name: string) => void;
+  placeholder?: string;
+  idPrefix: string; // keeps the listbox/option ids unique when there's more than one search on a page
+  autoFocus?: boolean;
+  onEscape?: () => void;
+  className?: string;
+}) {
+  const [query, setQuery] = useState("");
+  const [result, setResult] = useState<SearchResult | null>(null);
+  const [open, setOpen] = useState(false);
+  const [highlighted, setHighlighted] = useState(-1);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const trimmed = query.trim();
+  const current = result && result.q === trimmed ? result : null;
+  const names = current?.names ?? [];
+  const showDropdown = open && trimmed !== "";
+
+  // Debounced search: wait for a pause in typing, and cancel the previous request if the
+  // text changes again before it finishes.
+  useEffect(() => {
+    if (!trimmed) return;
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/athletes/search?q=${encodeURIComponent(trimmed)}`, {
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error(`search failed: ${res.status}`);
+        const data: { names: string[] } = await res.json();
+        setResult({ q: trimmed, names: data.names, error: false });
+        setHighlighted(-1);
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setResult({ q: trimmed, names: [], error: true });
+      }
+    }, DEBOUNCE_MS);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [trimmed]);
+
+  // Close the dropdown when clicking anywhere outside the search box.
+  useEffect(() => {
+    function onPointerDown(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, []);
+
+  function choose(name: string) {
+    setOpen(false);
+    setQuery("");
+    onSelect(name);
+  }
+
+  function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setOpen(true);
+      setHighlighted((h) => (names.length ? (h + 1) % names.length : -1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlighted((h) => (names.length ? (h <= 0 ? names.length - 1 : h - 1) : -1));
+    } else if (e.key === "Enter") {
+      const pick = highlighted >= 0 ? names[highlighted] : names[0];
+      if (pick) choose(pick);
+    } else if (e.key === "Escape") {
+      setOpen(false);
+      onEscape?.();
+    }
+  }
+
+  let message: string | null = null;
+  if (showDropdown) {
+    if (!current) message = "Searching...";
+    else if (current.error) message = "Search is unavailable right now.";
+    else if (names.length === 0) message = "No athletes found.";
+  }
+
+  return (
+    <div ref={containerRef} className={`relative ${className}`}>
+      <input
+        type="text"
+        role="combobox"
+        aria-expanded={showDropdown}
+        aria-controls={`${idPrefix}-suggestions`}
+        aria-autocomplete="list"
+        aria-activedescendant={highlighted >= 0 ? `${idPrefix}-option-${highlighted}` : undefined}
+        aria-label={placeholder}
+        value={query}
+        autoFocus={autoFocus}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={onKeyDown}
+        placeholder={placeholder}
+        className="w-full rounded-full border border-black/10 bg-transparent px-4 py-2 text-sm outline-none focus:border-black/30 dark:border-white/10 dark:focus:border-white/30"
+      />
+
+      {showDropdown && (
+        <ul
+          id={`${idPrefix}-suggestions`}
+          role="listbox"
+          className="absolute left-0 right-0 top-full z-40 mt-2 overflow-hidden rounded-xl border border-black/10 bg-white text-sm shadow-lg dark:border-white/10 dark:bg-black"
+        >
+          {message ? (
+            <li role="presentation" className="px-4 py-2 text-black/50 dark:text-white/50">
+              {message}
+            </li>
+          ) : (
+            names.map((name, i) => (
+              <li
+                key={name}
+                id={`${idPrefix}-option-${i}`}
+                role="option"
+                aria-selected={i === highlighted}
+                // mousedown (not click) so the choice lands before the input loses focus
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  choose(name);
+                }}
+                onMouseEnter={() => setHighlighted(i)}
+                className={`cursor-pointer px-4 py-2 ${i === highlighted ? "bg-black/5 dark:bg-white/10" : ""}`}
+              >
+                {name}
+              </li>
+            ))
+          )}
+        </ul>
+      )}
+    </div>
+  );
+}

@@ -11,7 +11,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { METRIC_FIELD, type Meet, type Metric, type Prediction } from "@/lib/athlete";
+import { METRIC_FIELD, type GraphSeries, type MarkerShape, type Metric, type Prediction } from "@/lib/athlete";
 
 type Point = {
   kind: "meet";
@@ -21,6 +21,9 @@ type Point = {
   meet: string;
   bodyweight: number | null;
   bombedOut: boolean;
+  athlete: string;
+  color: string;
+  shape: MarkerShape;
 };
 
 // A dot at the chosen date, one per band edge. `hidden` is the bands' starting point: it's never drawn,
@@ -41,7 +44,29 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const X_PADDING_MS = 30 * DAY_MS; // keeps a lone point (and the end points) off the axis edges
 // While a prediction is shown, only this much history before the latest meet is plotted.
 const ZOOM_WINDOW_MS = 365 * DAY_MS;
-const DOT_COLOR = "#2563eb";
+
+// A meet's marker in its athlete's colour and shape (see ATHLETE_STYLES), with a thin ring in the page
+// background so overlapping markers stay apart.
+function Marker({ cx, cy, color, shape, size = 5 }: { cx: number; cy: number; color: string; shape: MarkerShape; size?: number }) {
+  const ring = { stroke: "var(--background)", strokeWidth: 1 };
+  if (shape === "square") {
+    return <rect x={cx - size} y={cy - size} width={size * 2} height={size * 2} rx={1} fill={color} {...ring} />;
+  }
+  if (shape === "diamond") {
+    const d = size * 1.3;
+    return <polygon points={`${cx},${cy - d} ${cx + d},${cy} ${cx},${cy + d} ${cx - d},${cy}`} fill={color} {...ring} />;
+  }
+  return <circle cx={cx} cy={cy} r={size} fill={color} {...ring} />;
+}
+
+// The same marker for legends and tooltips, outside the chart.
+function MarkerIcon({ color, shape }: { color: string; shape: MarkerShape }) {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden className="shrink-0">
+      <Marker cx={6} cy={6} color={color} shape={shape} size={4.5} />
+    </svg>
+  );
+}
 
 // The prediction bands, top to bottom: each runs between two neighbouring percentiles, and they mirror
 // each other around the median (the same colour the same distance out on either side).
@@ -108,7 +133,17 @@ function PredictionBands({ prediction, originTotal }: { prediction: Prediction; 
   );
 }
 
-function ChartTooltip({ active, payload, metric }: { active?: boolean; payload?: ReadonlyArray<{ payload: Point | PredictionPoint }>; metric: Metric }) {
+function ChartTooltip({
+  active,
+  payload,
+  metric,
+  showAthlete,
+}: {
+  active?: boolean;
+  payload?: ReadonlyArray<{ payload: Point | PredictionPoint }>;
+  metric: Metric;
+  showAthlete: boolean; // when comparing, say whose meet it is
+}) {
   if (!active || !payload?.length) return null;
   const p = payload[0].payload;
   const box = "rounded-lg border border-black/10 bg-white px-3 py-2 text-xs shadow dark:border-white/10 dark:bg-black";
@@ -127,6 +162,12 @@ function ChartTooltip({ active, payload, metric }: { active?: boolean; payload?:
 
   return (
     <div className={box}>
+      {showAthlete && (
+        <div className="mb-1 flex items-center gap-1.5 font-semibold">
+          <MarkerIcon color={p.color} shape={p.shape} />
+          {p.athlete}
+        </div>
+      )}
       <div className="font-medium">{p.meet}</div>
       <div className={muted}>{p.date}</div>
       <div className="mt-1">
@@ -138,31 +179,40 @@ function ChartTooltip({ active, payload, metric }: { active?: boolean; payload?:
 }
 
 export default function Graph({
-  rows,
+  series,
   metric,
   prediction,
   originTotal,
 }: {
-  rows: Meet[];
+  // The page's athlete first, then any compared athletes, each with its colour and marker shape.
+  series: GraphSeries[];
   metric: Metric;
-  // Only passed for the Total graph; null when prediction is off, invalid, or still loading.
+  // The page's athlete only. Only passed for the Total graph; null when prediction is off, invalid, or
+  // still loading.
   prediction: Prediction | null;
   // Where the bands start: the athlete's latest meet total (their last real total if that meet was a bomb-out).
   originTotal: number | null;
 }) {
   const field = METRIC_FIELD[metric];
+  const comparing = series.length > 1;
 
-  const points: Point[] = rows
-    .flatMap((r) => {
-      // An undated meet has no place on the time axis.
-      if (!r.date) return [];
-      // A bomb-out's lifts are stored as 0 when missed entirely, so it plots at 0 for Total (and for
-      // whichever lift was bombed); if the other lift was made, that real value is plotted instead.
-      const value = r[field] ?? (r.bombed_out ? 0 : null);
-      if (value == null) return [];
-      return [{ kind: "meet" as const, t: Date.parse(r.date), value, date: r.date, meet: r.meet, bodyweight: r.bodyweight, bombedOut: r.bombed_out }];
-    })
-    .sort((a, b) => a.t - b.t);
+  const pointsBySeries: Point[][] = series.map((s) =>
+    s.rows
+      .flatMap((r) => {
+        // An undated meet has no place on the time axis.
+        if (!r.date) return [];
+        // A bomb-out's lifts are stored as 0 when missed entirely, so it plots at 0 for Total (and for
+        // whichever lift was bombed); if the other lift was made, that real value is plotted instead.
+        const value = r[field] ?? (r.bombed_out ? 0 : null);
+        if (value == null) return [];
+        return [{
+          kind: "meet" as const, t: Date.parse(r.date), value, date: r.date, meet: r.meet, bodyweight: r.bodyweight,
+          bombedOut: r.bombed_out, athlete: s.name, color: s.color, shape: s.shape,
+        }];
+      })
+      .sort((a, b) => a.t - b.t),
+  );
+  const anyPoints = pointsBySeries.some((p) => p.length > 0);
 
   const showPrediction = prediction !== null && originTotal !== null;
   const predictionPoints: PredictionPoint[] =
@@ -185,14 +235,15 @@ export default function Graph({
   // career: only the 12 months before the latest meet are plotted (inside whatever date range is set),
   // bomb-outs are left out so the y-axis needn't reach 0, and the y-axis fits those meets and the bands.
   // Otherwise the y-axis starts at 0.
-  let plotted = points;
+  // (Compared athletes are zoomed the same way, to the same window.)
+  let plotted = pointsBySeries;
   let yDomain: [number, number | ((max: number) => number)] = [0, (max: number) => Math.ceil(max / 10) * 10];
   let yTicks: number[] | undefined; // round-number ticks for the zoomed axis (Recharts' own land on e.g. 329, 338)
   if (showPrediction) {
     const windowStart = Date.parse(prediction.latest_meet.date) - ZOOM_WINDOW_MS;
-    plotted = points.filter((p) => p.t >= windowStart && !p.bombedOut);
+    plotted = pointsBySeries.map((pts) => pts.filter((p) => p.t >= windowStart && !p.bombedOut));
     const q = prediction.prediction;
-    const values = [...plotted.map((p) => p.value), originTotal, q.q1, q.q99];
+    const values = [...plotted.flat().map((p) => p.value), originTotal, q.q1, q.q99];
     const min = Math.min(...values) - 2;
     const max = Math.max(...values) + 2;
     const step = [5, 10, 20, 25, 50, 100].find((s) => (max - min) / s <= 6) ?? 100;
@@ -202,10 +253,20 @@ export default function Graph({
     yTicks = Array.from({ length: Math.round((hi - lo) / step) + 1 }, (_, i) => lo + i * step);
   }
 
-  const undated = rows.filter((r) => !r.date).length;
+  const undated = series[0]?.rows.filter((r) => !r.date).length ?? 0;
 
   return (
     <div>
+      {comparing && (
+        <p className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-black/70 dark:text-white/70">
+          {series.map((s) => (
+            <span key={s.name} className="flex items-center gap-1.5">
+              <MarkerIcon color={s.color} shape={s.shape} />
+              {s.name}
+            </span>
+          ))}
+        </p>
+      )}
       {showPrediction && (
         <p className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-black/60 dark:text-white/60">
           {BAND_KEY.map((b) => (
@@ -224,7 +285,7 @@ export default function Graph({
         </p>
       )}
       <div className="h-80 rounded-xl border border-black/10 p-3 text-black/60 dark:border-white/10 dark:text-white/60">
-        {points.length === 0 && !showPrediction ? (
+        {!anyPoints && !showPrediction ? (
           <div className="flex h-full items-center justify-center text-sm">No results to plot.</div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
@@ -258,14 +319,31 @@ export default function Graph({
                     active={props.active}
                     payload={props.payload as ReadonlyArray<{ payload: Point | PredictionPoint }>}
                     metric={metric}
+                    showAthlete={comparing}
                   />
                 )}
               />
               {showPrediction && <PredictionBands prediction={prediction} originTotal={originTotal} />}
-              <Scatter data={plotted} fill={DOT_COLOR} isAnimationActive={false} />
+              {/* zIndex puts the page's own athlete on top of compared ones (Recharts' default is 600). */}
+              {plotted.map((pts, i) => {
+                const s = series[i];
+                return (
+                  <Scatter
+                    key={s.name}
+                    name={s.name}
+                    data={pts}
+                    zIndex={600 + series.length - i}
+                    isAnimationActive={false}
+                    shape={(props: { cx?: number; cy?: number }) =>
+                      props.cx == null || props.cy == null ? <g /> : <Marker cx={props.cx} cy={props.cy} color={s.color} shape={s.shape} />
+                    }
+                  />
+                );
+              })}
               {showPrediction && (
                 <Scatter
                   data={predictionPoints}
+                  zIndex={700}
                   isAnimationActive={false}
                   shape={(props: { cx?: number; cy?: number; payload?: PredictionPoint }) =>
                     props.payload?.hidden || props.cx == null || props.cy == null ? (
