@@ -3,6 +3,13 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  /* Q-points distribution bands, lowest to highest (below 25th, 25-50th, 50-75th, 75-90th, top 10%):
+     one blue ramp, light to dark, checked with the dataviz palette validator (ordinal, on #ffffff). */
+  --dist-1: #86b6ef;
+  --dist-2: #5598e7;
+  --dist-3: #256abf;
+  --dist-4: #184f95;
+  --dist-5: #0d366b;
 }
 
 @theme inline {
@@ -16,6 +23,12 @@
   :root {
     --background: #0a0a0a;
     --foreground: #ededed;
+    /* On the dark background the top band is the brightest (validated on #0a0a0a). */
+    --dist-1: #184f95;
+    --dist-2: #256abf;
+    --dist-3: #3987e5;
+    --dist-4: #6da7ec;
+    --dist-5: #b7d3f6;
   }
 }
 

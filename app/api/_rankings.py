@@ -89,22 +89,27 @@ def _q_points_sql() -> str:
     return f"r.total * CASE WHEN r.gender = 'Women' THEN {expr('Women')} ELSE {expr('Men')} END"
 
 
-def candidates_query(name_key_sql: str) -> str:
-    """Each gender's top %(limit)s athletes by best Q-points under the rules that need only the result
-    itself (gender, bodyweight floor, snatch/clean & jerk ratio, date window). The jump rule (which needs
-    each athlete's whole history) and the hand-kept lists are applied afterwards, in compute_rankings: both
-    only ever lower an athlete's best, so these candidates' scores are upper bounds. Parameters: all_time,
-    limit."""
+def _best_per_athlete_sql(name_key_sql: str) -> str:
+    """Each athlete's best Q-points per gender (columns gender, key, best) under the rules that need only
+    the result itself: gender, bodyweight floor, snatch/clean & jerk ratio, date window (%(all_time)s)."""
     lo, hi = CJ_TO_SNATCH
     return f"""
-        WITH best AS (
             SELECT r.gender, {name_key_sql} AS key, max({_q_points_sql()}) AS best
             FROM meet_results r
             WHERE r.gender IN ('Men', 'Women') AND NOT r.bombed_out AND r.total > 0
               AND r.bodyweight >= CASE WHEN r.gender = 'Women' THEN {MIN_BODYWEIGHT['Women']} ELSE {MIN_BODYWEIGHT['Men']} END
               AND r.best_sn > 0 AND r.best_cj / r.best_sn BETWEEN {lo} AND {hi}
               AND (%(all_time)s OR r.date >= current_date - interval '1 year')
-            GROUP BY 1, 2
+            GROUP BY 1, 2"""
+
+
+def candidates_query(name_key_sql: str) -> str:
+    """Each gender's top %(limit)s athletes by best Q-points under the per-result rules. The jump rule (which
+    needs each athlete's whole history) and the hand-kept lists are applied afterwards, in
+    compute_rankings: both only ever lower an athlete's best, so these candidates' scores are upper
+    bounds. Parameters: all_time, limit."""
+    return f"""
+        WITH best AS ({_best_per_athlete_sql(name_key_sql)}
         ), ranked AS (
             SELECT *, row_number() OVER (PARTITION BY gender ORDER BY best DESC) AS rank FROM best
         )
@@ -204,3 +209,54 @@ def compute_rankings(cur, all_time: bool, normalize, name_key_sql: str, name_dis
         if complete:
             return out
         limit *= 2
+
+
+# ---- distribution (the charts under the top 10s)
+
+# Percentile cutoffs marked on the charts; the shaded bands run between them (the last band is the top 10%).
+DISTRIBUTION_PERCENTILES = (25, 50, 75, 90, 99)
+BIN_WIDTH = 10  # Q-points per bar of the underlying histogram
+
+
+def distribution_query(name_key_sql: str) -> str:
+    """Per gender: how many athletes' best Q-points fall in each BIN_WIDTH-wide bin, plus the athlete count
+    and the DISTRIBUTION_PERCENTILES cutoffs, in one statement. Same population as the lists (each athlete's
+    best in the window) under the per-result rules; the jump rule and the hand-kept lists are not applied
+    here (too slow over every athlete, and they touch about 0.2% of results, which can't move a cutoff
+    visibly). Parameter: all_time."""
+    fractions = ", ".join(str(p / 100) for p in DISTRIBUTION_PERCENTILES)
+    return f"""
+        WITH best AS ({_best_per_athlete_sql(name_key_sql)}
+        ), bins AS (
+            SELECT gender, floor(best / {BIN_WIDTH}) * {BIN_WIDTH} AS lo, count(*) AS athletes
+            FROM best GROUP BY 1, 2
+        ), stats AS (
+            SELECT gender, count(*) AS total,
+                   percentile_cont(ARRAY[{fractions}]) WITHIN GROUP (ORDER BY best) AS cutoffs
+            FROM best GROUP BY 1
+        )
+        SELECT b.gender, b.lo, b.athletes, s.total, s.cutoffs
+        FROM bins b JOIN stats s USING (gender)
+        ORDER BY b.gender, b.lo
+    """
+
+
+def compute_distribution(cur, all_time: bool, name_key_sql: str) -> dict:
+    """{"Men": {...}, "Women": {...}}: each {"athletes", "bin_width", "bins": [{"lo", "athletes"}],
+    "percentiles": [{"p", "q_points"}]}. Empty bins inside the range are filled with 0 so the chart's
+    curve doesn't skip them."""
+    cur.execute(distribution_query(name_key_sql), {"all_time": all_time})
+    out = {g: {"athletes": 0, "bin_width": BIN_WIDTH, "bins": [], "percentiles": []} for g in ("Men", "Women")}
+    for row in cur.fetchall():
+        d = out[row["gender"]]
+        if not d["percentiles"]:
+            d["athletes"] = int(row["total"])
+            d["percentiles"] = [{"p": p, "q_points": round(float(v), 1)}
+                                for p, v in zip(DISTRIBUTION_PERCENTILES, row["cutoffs"])]
+        d["bins"].append({"lo": int(row["lo"]), "athletes": int(row["athletes"])})
+    for d in out.values():
+        if d["bins"]:
+            counts = {b["lo"]: b["athletes"] for b in d["bins"]}
+            lo, hi = d["bins"][0]["lo"], d["bins"][-1]["lo"]
+            d["bins"] = [{"lo": x, "athletes": counts.get(x, 0)} for x in range(lo, hi + BIN_WIDTH, BIN_WIDTH)]
+    return out
