@@ -23,6 +23,8 @@ function ordinal(p: number) {
 type Point = { x: number; athletes: number; lo: number | null };
 
 function bandFor(q: number, cutoffs: number[]) {
+  // Above the 99th percentile the hover says "Top 1%" (requested 2026-11-08), still in the top band's colour.
+  if (cutoffs[4] != null && q >= cutoffs[4]) return { label: "Top 1%", color: BANDS[4].color };
   const i = cutoffs.slice(0, 4).findIndex((c) => q < c);
   return BANDS[i === -1 ? 4 : i];
 }

@@ -36,7 +36,7 @@ export default function ThemeToggle() {
       type="button"
       onClick={toggle}
       aria-label="Switch between day and night mode"
-      title="Switch between day and night mode"
+      title="Click me!" // the hover text (requested 2026-11-08); the aria-label says what it does
       className="flex h-6 w-6 items-center justify-center rounded-md text-black/60 hover:bg-black/5 hover:text-black dark:text-white/60 dark:hover:bg-white/10 dark:hover:text-white"
     >
       <svg className="dark:hidden" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
