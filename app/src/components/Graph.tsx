@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
 import {
   CartesianGrid,
   ResponsiveContainer,
@@ -183,43 +182,6 @@ function ChartTooltip({
   );
 }
 
-// The zoom into and out of a prediction is animated (requested 2026-11-08): both axes' domains glide to
-// their new values instead of cutting. Points that end up outside the domain are clipped by the axes'
-// allowDataOverflow, so they slide out of view rather than vanishing.
-const ZOOM_ANIMATION_MS = 600;
-
-function useAnimatedDomain(target: [number, number]): [number, number] {
-  const [shown, setShown] = useState(target);
-  const shownRef = useRef(target);
-  const key = `${target[0]},${target[1]}`;
-  useEffect(() => {
-    const [toLo, toHi] = key.split(",").map(Number);
-    const [fromLo, fromHi] = shownRef.current;
-    if (fromLo === toLo && fromHi === toHi) return;
-    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    const start = performance.now();
-    let frame = 0;
-    const tick = (now: number) => {
-      const k = reduced ? 1 : Math.min(1, (now - start) / ZOOM_ANIMATION_MS);
-      const e = 1 - (1 - k) ** 3; // ease-out
-      const next: [number, number] = [fromLo + (toLo - fromLo) * e, fromHi + (toHi - fromHi) * e];
-      shownRef.current = next;
-      setShown(next);
-      if (k < 1) frame = requestAnimationFrame(tick);
-    };
-    frame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frame);
-  }, [key]);
-  return shown;
-}
-
-// Round-number y ticks for a domain (Recharts' own land on e.g. 329, 338 once the domain isn't round).
-function roundTicks([lo, hi]: [number, number]): number[] {
-  const step = [5, 10, 20, 25, 50, 100, 200].find((s) => (hi - lo) / s <= 6) ?? 500;
-  const first = Math.ceil(lo / step) * step;
-  return Array.from({ length: Math.max(0, Math.floor((hi - first) / step) + 1) }, (_, i) => first + i * step);
-}
-
 export default function Graph({
   series,
   metric,
@@ -283,36 +245,24 @@ export default function Graph({
   // career: only the 12 months before the (earliest predicted athlete's) latest meet are plotted (inside
   // whatever date range is set), bomb-outs are left out so the y-axis needn't reach 0, and the y-axis fits
   // those meets and every athlete's bands. Otherwise the y-axis starts at 0.
-  // Both domains are worked out here as plain numbers (not left to Recharts) so the zoom can be animated.
-  // Every meet stays plotted; the ones outside the zoom are clipped. Bomb-outs are dropped while zoomed.
-  const plotted = showPrediction ? pointsBySeries.map((pts) => pts.filter((p) => !p.bombedOut)) : pointsBySeries;
-  let inView = plotted.flat();
-  let xTarget: [number, number];
-  let yTarget: [number, number];
+  let plotted = pointsBySeries;
+  let yDomain: [number, number | ((max: number) => number)] = [0, (max: number) => Math.ceil(max / 10) * 10];
+  let yTicks: number[] | undefined; // round-number ticks for the zoomed axis (Recharts' own land on e.g. 329, 338)
   if (showPrediction) {
     const windowStart = Math.min(...predictions.map((p) => Date.parse(p.prediction.latest_meet.date))) - ZOOM_WINDOW_MS;
-    inView = inView.filter((p) => p.t >= windowStart);
-    const times = [...inView.map((p) => p.t), ...predictionPoints.map((p) => p.t)];
-    xTarget = [Math.min(...times) - X_PADDING_MS, Math.max(...times) + X_PADDING_MS];
+    plotted = pointsBySeries.map((pts) => pts.filter((p) => p.t >= windowStart && !p.bombedOut));
     const values = [
-      ...inView.map((p) => p.value),
+      ...plotted.flat().map((p) => p.value),
       ...predictions.flatMap((p) => [p.originTotal, p.prediction.prediction.q1, p.prediction.prediction.q99]),
     ];
     const min = Math.min(...values) - 2;
     const max = Math.max(...values) + 2;
     const step = [5, 10, 20, 25, 50, 100].find((s) => (max - min) / s <= 6) ?? 100;
-    yTarget = [Math.max(0, Math.floor(min / step) * step), Math.ceil(max / step) * step];
-  } else if (inView.length > 0) {
-    const times = inView.map((p) => p.t);
-    xTarget = [Math.min(...times) - X_PADDING_MS, Math.max(...times) + X_PADDING_MS];
-    yTarget = [0, Math.max(10, Math.ceil(Math.max(...inView.map((p) => p.value)) / 10) * 10)];
-  } else {
-    xTarget = [0, 1];
-    yTarget = [0, 10];
+    const lo = Math.max(0, Math.floor(min / step) * step);
+    const hi = Math.ceil(max / step) * step;
+    yDomain = [lo, hi];
+    yTicks = Array.from({ length: Math.round((hi - lo) / step) + 1 }, (_, i) => lo + i * step);
   }
-  const xDomain = useAnimatedDomain(xTarget);
-  const yDomain = useAnimatedDomain(yTarget);
-  const yTicks = roundTicks(yDomain);
 
   const undated = series[0]?.rows.filter((r) => !r.date).length ?? 0;
 
@@ -359,8 +309,7 @@ export default function Graph({
                 dataKey="t"
                 type="number"
                 name="Date"
-                domain={xDomain}
-                allowDataOverflow
+                domain={[(min: number) => min - X_PADDING_MS, (max: number) => max + X_PADDING_MS]}
                 tickFormatter={formatTick}
                 tick={{ fill: "currentColor", fontSize: 12 }}
                 stroke="currentColor"
@@ -371,7 +320,6 @@ export default function Graph({
                 type="number"
                 name={metric}
                 domain={yDomain}
-                allowDataOverflow
                 ticks={yTicks}
                 width={44}
                 tick={{ fill: "currentColor", fontSize: 12 }}
