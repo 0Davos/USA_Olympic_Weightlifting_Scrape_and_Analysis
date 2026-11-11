@@ -41,6 +41,20 @@ COLUMN_MAP = {
     "Gender": "gender",
     "weight_class": "weight_class",
     "bombed_out": "bombed_out",
+    "Meet Level": "meet_level",
+    "Meet Results": "meet_results",
+    "Division": "division",
+    "Age Bucket": "age_bucket",
+}
+
+# Columns added after the table was first created, with their SQL types. to_sql(append) won't add a
+# missing column, so each is added (if missing) before the reload.
+ADDED_COLUMNS = {
+    "bombed_out": "boolean",
+    "meet_level": "text",
+    "meet_results": "integer",
+    "division": "text",
+    "age_bucket": "text",
 }
 
 
@@ -86,6 +100,8 @@ def load_to_supabase():
 
     df = pd.read_csv(FEATURES_CSV_PATH)
     df = df[list(COLUMN_MAP.keys())].rename(columns=COLUMN_MAP)
+    # Read back as a float (blanks make it NaN); a whole number for the integer column.
+    df["meet_results"] = df["meet_results"].astype("Int64")
 
     # meet_clean.py already drops takedown-listed athletes; checked again here because this is the
     # last step before the public site, and a local run could be using an older FEATURES file.
@@ -96,9 +112,9 @@ def load_to_supabase():
 
     engine = create_engine(db_url)
     with engine.begin() as conn:
-        # The table was created before bombed_out existed; to_sql(append) won't add
-        # a missing column, so make sure it's there (no-op once it is).
-        conn.execute(text(f'ALTER TABLE "{TABLE_NAME}" ADD COLUMN IF NOT EXISTS bombed_out boolean'))
+        # The table predates these columns; make sure each is there (no-op once it is).
+        for column, sql_type in ADDED_COLUMNS.items():
+            conn.execute(text(f'ALTER TABLE "{TABLE_NAME}" ADD COLUMN IF NOT EXISTS {column} {sql_type}'))
 
         if backup_live_table(conn) is not None:
             n_deleted = delete_listed_rows(conn, hashes, BACKUP_TABLE_NAME)

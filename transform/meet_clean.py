@@ -75,6 +75,42 @@ def parse_weight_category(cat):
     return pd.Series([age_group, gender, bw])
 
 
+YOUTH_DIVISIONS = {"11 & Under", "13 & Under", "14-15", "16-17"}
+
+
+def division_label(weight_category):
+    """The age division a result was entered in, from its (cleaned) weight category: "11 & Under",
+    "13 & Under", "14-15", "16-17", "Junior", "Open" or "Masters 35-39" (… "Masters 80+"); None if it
+    can't be read. Parsed the same way as division_code() in feature_engineering.py (the models'
+    ordered number for it), so the two always agree. It's the bracket the lifter entered, not their age:
+    juniors and masters-age lifters can also enter Open."""
+    if weight_category is None or pd.isna(weight_category):
+        return None
+    s = re.sub(r"^(Men's|Women's)\s*|\s*(Men's|Women's)\s*", " ", str(weight_category))
+    s = re.sub(r"\s*\d+\+?\s*kg\+?$", "", s).strip()
+    if "Under" in s:
+        return "13 & Under" if s.startswith("13") else "11 & Under"
+    for name in ("14-15", "16-17", "Junior", "Open"):
+        if s.startswith(name):
+            return name
+    m = re.match(r"Masters \((\d+)(-\d+|\+)\)", s)
+    if m:
+        return f"Masters {m.group(1)}{m.group(2)}"
+    return None
+
+
+def age_bucket(division):
+    """The site's age bucket for a division (decided 2026-11-11): "Youth" (17 and under), "Junior",
+    "Open" or "Masters" (35+); None if the division is unknown."""
+    if division is None or pd.isna(division):
+        return None
+    if division in YOUTH_DIVISIONS:
+        return "Youth"
+    if division.startswith("Masters"):
+        return "Masters"
+    return division  # "Junior" or "Open"
+
+
 def parse_mixed_format_dates(date_series):
     """Parses a Date column/Series that may contain a mix of US (M/D/YYYY) and
     ISO (YYYY-MM-DD) formatted strings - the original bulk-loaded historical
@@ -111,6 +147,15 @@ def clean_meet_data(df):
         print(f"Takedown list: dropped {n_removed} rows")
 
     df = parse_weight_categories(df)
+    df["Division"] = df["Weight Category"].map(division_label)
+    df["Age Bucket"] = df["Division"].map(age_bucket)
+
+    # Meet level and number of results come straight from the scraper (blank where a meet couldn't be
+    # matched to USAW's meet list); added empty if the raw CSV predates them.
+    for col in ("Meet Level", "Meet Results"):
+        if col not in df.columns:
+            df[col] = np.nan
+    df["Meet Results"] = pd.to_numeric(df["Meet Results"], errors="coerce").astype("Int64")
 
     # Drop WC_BW (redundant with Weight Category), rename to friendlier names
     df_cleaned = df.drop(columns="WC_BW")
