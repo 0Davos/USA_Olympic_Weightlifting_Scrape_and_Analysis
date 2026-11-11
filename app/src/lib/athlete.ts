@@ -58,14 +58,6 @@ export async function fetchHistory(name: string, signal: AbortSignal): Promise<A
   return res.json();
 }
 
-// Both bounds are optional "YYYY-MM-DD" strings (which compare correctly as plain strings).
-// With no bounds set every meet passes, including undated ones; once a bound is set an
-// undated meet can't be known to fall inside it, so it drops out.
-export function filterByDateRange(results: Meet[], from: string, to: string): Meet[] {
-  if (!from && !to) return results;
-  return results.filter((r) => r.date && (!from || r.date >= from) && (!to || r.date <= to));
-}
-
 // ---- prediction
 
 // Keep in step with MAX_PREDICT_DAYS_AHEAD in app/api/index.py (the API enforces it either way; this just

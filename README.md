@@ -144,8 +144,9 @@ Segmented evaluation (tuned XGBoost, by performance percentile within weight cla
 A public, read-only site built on the pipeline above.
 
 - **Athlete search** with as-you-type suggestions
-- **Athlete pages**: snatch, clean & jerk or total over time (bomb-outs shown), adjustable date range, and a full results table
-- **Next-meet predictions**: pick a date (up to 12 months ahead) and a bodyweight, and the graph shows the predicted median total plus 25th–75th and up-to-99th-percentile bands, starting from the athlete's latest meet
+- **Home page**: the top 10 men and women by Q-points (past year or all time), a chart of how Q-points are spread for each, the fastest improvers (biggest new career-best Q-points in the past year), and charts of new athletes per year and meets per athlete
+- **Athlete pages**: snatch, clean & jerk or total over time (bomb-outs shown) and a full results table; compare up to two other athletes on the same graph, each in their own colour and marker shape
+- **Next-meet predictions**: pick a date (up to 12 months ahead) for each athlete on the graph, and it shows the predicted median total with bands from the 1st to the 99th percentile, mirrored around the median and starting from the athlete's latest meet (made at their last recorded bodyweight)
 
 ### Architecture
 
@@ -153,7 +154,7 @@ A public, read-only site built on the pipeline above.
 |---|---|
 | Data refresh | Scraper run locally (USAW's 2FA can't be automated); pushing new data triggers a GitHub Actions workflow that cleans it, engineers features and reloads the database (`.github/workflows/clean-data.yml`) |
 | Database | Supabase Postgres, reloaded in one transaction per run, with the previous run's data kept in a backup table (`transform/load_to_supabase.py`, `transform/restore_from_backup.py`). The website uses a read-only login |
-| API | FastAPI on Vercel (`app/api/`). Predictions are computed live: the 24 features are rebuilt in plain Python (no pandas or scikit-learn, to fit Vercel's size limit) and fed to the LightGBM models in native text format. `tests/check_prediction_features.py` checks the rebuild matches the pipeline's features exactly |
+| API | FastAPI on Vercel (`app/api/`). Predictions are computed live: the 27 features are rebuilt in plain Python (no pandas or scikit-learn, to fit Vercel's size limit) and the LightGBM models, saved in their native text format, are read and run by a small pure-Python tree reader (no `lightgbm` package, which Vercel's runtime can't load). The models predict the change from the athlete's last total. `tests/check_prediction_features.py` checks the rebuild matches the pipeline's features exactly, and `tests/check_tree_model.py` checks the reader matches LightGBM's own predictions. Rankings and charts are computed in SQL at request time and cached by Vercel's CDN for an hour |
 | Frontend | Next.js, React, Tailwind and Recharts on Vercel (`app/`) |
 
 ## Setup
