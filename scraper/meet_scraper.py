@@ -66,13 +66,51 @@ def get_scrape_date_range():
     return start_date, end_date
 
 
-def build_results_url(start_date, end_date):
+def encode_date_filter(start_date, end_date):
+    """The meet list's ?filters= value: base64 of the date-range JSON."""
     filters = {
         "date_range_start": start_date.strftime("%Y-%m-%d"),
         "date_range_end": end_date.strftime("%Y-%m-%d"),
     }
-    encoded = base64.b64encode(json.dumps(filters, separators=(',', ':')).encode()).decode()
-    return f"https://usaweightlifting.sport80.com/v/1023105/r/results?filters={encoded}"
+    return base64.b64encode(json.dumps(filters, separators=(',', ':')).encode()).decode()
+
+
+def build_results_url(start_date, end_date):
+    return f"https://usaweightlifting.sport80.com/v/1023105/r/results?filters={encode_date_filter(start_date, end_date)}"
+
+
+# Read from each meet's row on the meet list (before clicking into it) and stored on every result row of
+# that meet. Level is "Local", "National", "International" or "North American Open Series"; Results is how many
+# results the meet has
+# (for international meets, only the US lifters' results). scraper/backfill_meet_info.py fills them in
+# for rows scraped before these columns existed.
+MEET_LEVEL_COL = "Meet Level"
+MEET_RESULTS_COL = "Meet Results"
+
+
+def read_meet_list_headers(page):
+    """The meet list table's column headers, e.g. ["Meet", "Level", "Date", "Results", "Actions"]."""
+    return [h.strip() for h in page.locator("table thead th").all_inner_texts()]
+
+
+def parse_meet_list_row(cells, headers):
+    """One meet-list row's cell texts -> {"Meet", "Level", "Date", "Results"}. Columns are found by header
+    name rather than position, so a reordered or extra column can't shift the values. A column that
+    isn't there comes back as "" (Results as None)."""
+    def cell(name):
+        if name in headers:
+            i = headers.index(name)
+            if i < len(cells):
+                return cells[i].strip()
+        return ""
+
+    results = cell("Results").replace(",", "")
+    return {
+        "Meet": cell("Meet"),
+        "Level": cell("Level"),
+        "Date": cell("Date"),
+        "Results": int(results) if results.isdigit() else None,
+    }
 
 
 CODE_WAIT_SECONDS = 300
@@ -213,6 +251,11 @@ def scrape_meets(code_file=None):
             # below to verify the next page of meets actually loaded.
             first_meet_signature = meet_rows.first.inner_text() if meet_count > 0 else ""
 
+            meet_list_headers = read_meet_list_headers(page)
+            if "Level" not in meet_list_headers or "Results" not in meet_list_headers:
+                print(f"Warning: meet list has no Level/Results column (headers: {meet_list_headers}) - "
+                      f"those fields will be blank for this page's meets")
+
             # click through each meet on the current page
             for i in range(meet_count):
                 meet_name = None
@@ -222,7 +265,8 @@ def scrape_meets(code_file=None):
                     meet_rows = page.locator("tr.row-clickable")
                     meet_row = meet_rows.nth(i)
                     meet_name = meet_row.inner_text().split("\n")[0]
-                    print(f"Clicking meet: {meet_name}")
+                    meet_info = parse_meet_list_row(meet_row.locator("td").all_inner_texts(), meet_list_headers)
+                    print(f"Clicking meet: {meet_name} ({meet_info['Level'] or '?'}, {meet_info['Results']} results)")
 
                     # Click meet row and wait for new page
                     with page.context.expect_page() as new_page_info:
@@ -259,7 +303,7 @@ def scrape_meets(code_file=None):
                                     if (!row) return [];
                                     return Array.from(row.querySelectorAll('td div')).map(d => d.textContent.trim());
                                 }""", j)
-                                all_data.append(row_cells)
+                                all_data.append((row_cells, meet_info))
                             except Exception as e:
                                 print(f"Error getting row {j}: {e}")
 
@@ -337,7 +381,7 @@ def scrape_meets(code_file=None):
         # --------------------------
         # Clean all_data
         parsed_data = []
-        for row_cells in all_data:
+        for row_cells, meet_info in all_data:
             # Map each row to dictionary with your column names
             athlete_dict = {
                 "Meet": row_cells[0] if len(row_cells) > 0 else "",
@@ -354,6 +398,8 @@ def scrape_meets(code_file=None):
                 "Best Sn": row_cells[11] if len(row_cells) > 11 else None,
                 "Best CJ": row_cells[12] if len(row_cells) > 12 else None,
                 "Total": row_cells[13] if len(row_cells) > 13 else None,
+                MEET_LEVEL_COL: meet_info["Level"],
+                MEET_RESULTS_COL: meet_info["Results"],
             }
             parsed_data.append(athlete_dict)
 
@@ -393,6 +439,8 @@ def scrape_meets(code_file=None):
             print(f"After deduplication: {len(deduped_data)} unique rows")
 
             new_df = pd.DataFrame(deduped_data)
+            # Nullable integer, so a missing count is written as blank rather than turning 45 into "45.0".
+            new_df[MEET_RESULTS_COL] = new_df[MEET_RESULTS_COL].astype("Int64")
             # Never store new rows for athletes who asked to be removed.
             new_df, n_listed = drop_listed(new_df)
             if n_listed:
@@ -427,6 +475,16 @@ def scrape_meets(code_file=None):
                 ))
                 keep_mask = [key not in existing_keys for key in new_keys]
                 new_df = new_df[keep_mask]
+
+                # Appended rows must line up with the file's own header. If the CSV predates the meet
+                # level/results columns, they're left off here (with a warning) rather than appended
+                # under no header; scraper/backfill_meet_info.py adds the columns and fills every row.
+                existing_cols = list(existing_df.columns)
+                not_in_file = [c for c in new_df.columns if c not in existing_cols]
+                if not_in_file:
+                    print(f"Warning: {CSV_PATH} has no {not_in_file} column(s) - run "
+                          f"scraper/backfill_meet_info.py to add them; leaving them off these rows for now")
+                new_df = new_df.reindex(columns=existing_cols)
 
             if new_df.empty:
                 print("No new rows to append — CSV already up to date.")
