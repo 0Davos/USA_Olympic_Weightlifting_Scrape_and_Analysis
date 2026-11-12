@@ -179,6 +179,9 @@ def clean_meet_data(df):
     misses_to_nan_cols = ["Sn#1", "Sn#2", "Sn#3", "CJ#1", "CJ#2", "CJ#3"]
     for col in misses_to_nan_cols:
         df_cleaned[f"{col}_missed"] = df_cleaned[col] <= 0
+        # The weight attempted, made or missed (the source writes a miss as a negative weight, and 0
+        # for an attempt not taken). Kept for "weight left on the platform" (feature_engineering.py).
+        df_cleaned[f"{col}_attempted"] = df_cleaned[col].abs().where(df_cleaned[col] != 0)
     df_cleaned[misses_to_nan_cols] = df_cleaned[misses_to_nan_cols].apply(lambda x: x.where(x > 0, np.nan))
 
     # Known data-entry error corrections, matched by content (not row position)

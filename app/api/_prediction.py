@@ -1,13 +1,14 @@
 """Predict an athlete's total at a future meet.
 
-Rebuilds the 27 features the quantile models were trained on from the athlete's previous meets
+Rebuilds the 34 features the quantile models were trained on from the athlete's previous meets
 plus the chosen meet date and bodyweight, in plain Python (no pandas: it would push the
 deployed function over Vercel's size limit). Every feature mirrors transform/feature_engineering.py
 exactly, quirks included; tests/check_prediction_features.py proves that against the real data.
 If you change one side, change the other and re-run that check.
 
 Since model v2 (2026-11-08) the models predict the CHANGE from the athlete's last real total (their
-latest meet that wasn't a bomb-out); predict_next_meet adds it back (see models/train.py).
+latest meet that wasn't a bomb-out); predict_next_meet adds it back (see models/train.py). Model v3
+(2026-11-11) adds seven history features (add_v3_features in feature_engineering.py), mirrored below.
 
 The leading underscore keeps Vercel from treating this file (or _models/) as an endpoint.
 """
@@ -33,6 +34,8 @@ FEATURE_COLS = [
     'cj_improvement_last_3', 'comps_last_180_days',
     'avg_days_between_comps', 'comp_timing_deviation',
     'prev_division_code', 'career_days', 'meet_month',
+    'sn_left_on_platform', 'cj_left_on_platform', 'total_rate_per_month', 'change_volatility',
+    'gap_from_best', 'career_rate_per_month', 'bodyweight_trend_per_month',
 ]
 
 MODELS_DIR = Path(__file__).resolve().parent / "_models"
@@ -40,6 +43,10 @@ QUANTILES = (1, 25, 50, 75, 99)
 
 NAN = float("nan")
 ATTEMPT_FIELDS = ("sn_1", "sn_2", "sn_3", "cj_1", "cj_2", "cj_3")
+# Model v3: same as feature_engineering.py's DAYS_PER_MONTH and SLOPE_WINDOW.
+DAYS_PER_MONTH = 30.44
+SLOPE_WINDOW = 5
+EPOCH = date(1970, 1, 1)
 
 _boosters = None
 
@@ -175,6 +182,31 @@ def _improvement_streak(totals: list[float]) -> float:
     return float(went_up(m) + went_up(m - 1) + went_up(m - 2))
 
 
+def _slope_per_month(y: list, days: list) -> float:
+    """feature_engineering.prior_slope_per_month for the row after these meets: the least-squares slope
+    of y per month over the last SLOPE_WINDOW of them, skipping missing values; NaN with fewer than 2 or
+    all on one day. Same numpy arithmetic, in the same order, so the result matches to the last digit."""
+    yy = np.array([NAN if _missing(v) else float(v) for v in y[-SLOPE_WINDOW:]], dtype=float)
+    tt = np.array(days[-SLOPE_WINDOW:], dtype=float)
+    ok = ~np.isnan(yy) & ~np.isnan(tt)
+    if ok.sum() < 2:
+        return NAN
+    tc = tt[ok] - tt[ok].mean()
+    den = (tc * tc).sum()
+    if not den > 0:
+        return NAN
+    return float((tc * (yy[ok] - yy[ok].mean())).sum() / den * DAYS_PER_MONTH)
+
+
+def _left_on_platform(meet: dict, lift: str, best_field: str) -> float:
+    """Heaviest weight attempted (made or missed) minus heaviest made, at one meet, for one lift."""
+    tried = [float(meet[f"{lift}_{n}_attempted"]) for n in (1, 2, 3) if not _missing(meet.get(f"{lift}_{n}_attempted"))]
+    best = meet.get(best_field)
+    if not tried or _missing(best):
+        return NAN
+    return max(tried) - float(best)
+
+
 def _division_code(weight_category) -> float:
     """The age division in a weight category as an ordered number - must match division_code in
     transform/feature_engineering.py: 0 = 11 & Under, 1 = 13 & Under, 2 = 14-15, 3 = 16-17, 4 = Junior,
@@ -198,10 +230,11 @@ def _division_code(weight_category) -> float:
 
 
 def next_meet_features(history: list[dict], target_date, target_bodyweight: float) -> list[float]:
-    """The model's 27 features, in FEATURE_COLS order, for a meet on target_date at target_bodyweight.
+    """The model's 34 features, in FEATURE_COLS order, for a meet on target_date at target_bodyweight.
 
     `history` is the athlete's earlier meets as dicts shaped like rows of the meet_results table
-    (date, bodyweight, sn_1..cj_3, best_sn, best_cj, total, bombed_out, gender, weight_category). Missing values
+    (date, bodyweight, sn_1..cj_3, sn_1_attempted..cj_3_attempted, best_sn, best_cj, total, bombed_out, gender,
+    weight_category). Missing values
     (None or NaN) are left as NaN here; predict_next_meet fills them with 0 exactly as training did.
 
     Two groups, as in the pipeline: performance-history features use only meets that were not
@@ -228,6 +261,9 @@ def next_meet_features(history: list[dict], target_date, target_bodyweight: floa
         # model v2: the division at their latest meet, career length, and the month
         f["prev_division_code"] = _division_code(rows[-1].get("weight_category"))
         f["career_days"] = float((target - dates[0]).days)
+        # model v3: bodyweight trend in kg per month over the last few meets (every meet)
+        f["bodyweight_trend_per_month"] = _slope_per_month(
+            [r.get("bodyweight") for r in rows], [float((d - EPOCH).days) for d in dates])
     f["meet_month"] = float(target.month)
 
     # ---- performance history: meets that weren't bomb-outs
@@ -256,6 +292,18 @@ def next_meet_features(history: list[dict], target_date, target_bodyweight: floa
         f["sn_to_cj_ratio"] = snatch[-1] / cj[-1] if cj[-1] else NAN
         f["sn_improvement_last_3"] = _trend(snatch)
         f["cj_improvement_last_3"] = _trend(cj)
+
+        # model v3
+        f["sn_left_on_platform"] = _left_on_platform(valid[-1], "sn", "best_sn")
+        f["cj_left_on_platform"] = _left_on_platform(valid[-1], "cj", "best_cj")
+        vdays = [float((d - EPOCH).days) for d in vdates]
+        f["total_rate_per_month"] = _slope_per_month(totals, vdays)
+        if m >= 3:  # spread of the last few meet-to-meet changes
+            f["change_volatility"] = float(np.diff(np.array(totals[-(SLOPE_WINDOW + 1):], dtype=float)).std())
+        f["gap_from_best"] = best_total - totals[-1]
+        span = vdays[-1] - vdays[0]
+        if span > 0:
+            f["career_rate_per_month"] = (totals[-1] - totals[0]) / span * DAYS_PER_MONTH
 
     gender = next((r.get("gender") for r in reversed(rows) if r.get("gender") in ("Men", "Women")), None)
     if gender:

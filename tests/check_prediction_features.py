@@ -2,7 +2,7 @@
 
 For every real meet in data/meet_results_FEATURES.csv (after the athlete's first), pretend that meet
 hasn't happened yet: hand the calculator only the athlete's EARLIER meets, plus that meet's date and
-bodyweight, and compare the 24 features it returns with the values the pipeline stored for that row.
+bodyweight, and compare the 34 features it returns with the values the pipeline stored for that row.
 They should be identical. Bomb-out meets only have attendance features in the file, so only those
 are compared for them.
 
@@ -31,8 +31,10 @@ import train as T  # noqa: E402  (only for FEATURE_COLS)
 FEATURES_CSV = ROOT / "data" / "meet_results_FEATURES.csv"
 ATTENDANCE = {"Bodyweight", "Num Competitions", "Days Since Last Comp", "comps_last_180_days",
               "avg_days_between_comps", "comp_timing_deviation",
-              "prev_division_code", "career_days", "meet_month"}  # model v2: also over every meet
+              "prev_division_code", "career_days", "meet_month",  # model v2: also over every meet
+              "bodyweight_trend_per_month"}  # model v3
 ATTEMPT_COLS = ["Sn#1", "Sn#2", "Sn#3", "CJ#1", "CJ#2", "CJ#3"]
+TRIED_COLS = [f"{c}_attempted" for c in ATTEMPT_COLS]  # model v3: weight attempted, made or missed
 ATTEMPT_KEYS = ["sn_1", "sn_2", "sn_3", "cj_1", "cj_2", "cj_3"]
 
 
@@ -58,7 +60,7 @@ def main():
     assert P.FEATURE_COLS == T.QUANTILE_FEATURE_COLS, "FEATURE_COLS in app/api/_prediction.py differs from QUANTILE_FEATURE_COLS in models/train.py"
     print("FEATURE_COLS match models/train.py")
 
-    cols = ["Name", "Date", "Bodyweight", "Gender", "Best Sn", "Best CJ", "Total", "bombed_out", "Weight Category"] + ATTEMPT_COLS
+    cols = ["Name", "Date", "Bodyweight", "Gender", "Best Sn", "Best CJ", "Total", "bombed_out", "Weight Category"] + ATTEMPT_COLS + TRIED_COLS
     cols += [c for c in T.QUANTILE_FEATURE_COLS if c not in cols]
     df = pd.read_csv(FEATURES_CSV, usecols=cols)
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
@@ -92,8 +94,9 @@ def main():
                 "gender": rec["Gender"] if isinstance(rec["Gender"], str) else None,
                 "weight_category": rec["Weight Category"] if isinstance(rec["Weight Category"], str) else None,
                 **{k: none_if_nan(rec[c]) for k, c in zip(ATTEMPT_KEYS, ATTEMPT_COLS)},
+                **{f"{k}_attempted": none_if_nan(rec[c]) for k, c in zip(ATTEMPT_KEYS, TRIED_COLS)},
             }
-            for rec in g[["Date", "Bodyweight", "Best Sn", "Best CJ", "Total", "bombed_out", "Gender", "Weight Category"] + ATTEMPT_COLS].to_dict("records")
+            for rec in g[["Date", "Bodyweight", "Best Sn", "Best CJ", "Total", "bombed_out", "Gender", "Weight Category"] + ATTEMPT_COLS + TRIED_COLS].to_dict("records")
         ]
         expected = g[T.QUANTILE_FEATURE_COLS].to_numpy(dtype=float)
         bombed = g["bombed_out"].to_numpy(dtype=bool)
