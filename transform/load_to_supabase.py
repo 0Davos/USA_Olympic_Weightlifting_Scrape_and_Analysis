@@ -45,6 +45,14 @@ COLUMN_MAP = {
     "Meet Results": "meet_results",
     "Division": "division",
     "Age Bucket": "age_bucket",
+    # The weight attempted, made or missed (sn_1 etc. are blank for a miss). The API's model v3 needs
+    # them for "weight left on the platform".
+    "Sn#1_attempted": "sn_1_attempted",
+    "Sn#2_attempted": "sn_2_attempted",
+    "Sn#3_attempted": "sn_3_attempted",
+    "CJ#1_attempted": "cj_1_attempted",
+    "CJ#2_attempted": "cj_2_attempted",
+    "CJ#3_attempted": "cj_3_attempted",
 }
 
 # Columns added after the table was first created, with their SQL types. to_sql(append) won't add a
@@ -55,6 +63,7 @@ ADDED_COLUMNS = {
     "meet_results": "integer",
     "division": "text",
     "age_bucket": "text",
+    **{f"{lift}_{n}_attempted": "double precision" for lift in ("sn", "cj") for n in (1, 2, 3)},
 }
 
 

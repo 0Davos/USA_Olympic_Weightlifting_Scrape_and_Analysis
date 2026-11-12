@@ -236,6 +236,7 @@ def ath_predict(
     rows = run_query(
         f"""
         SELECT {NAME_DISPLAY_SQL} AS name, date, bodyweight, sn_1, sn_2, sn_3, cj_1, cj_2, cj_3,
+               sn_1_attempted, sn_2_attempted, sn_3_attempted, cj_1_attempted, cj_2_attempted, cj_3_attempted,
                best_sn, best_cj, total, bombed_out, gender, weight_category
         FROM meet_results
         WHERE {NAME_KEY_SQL} = %s

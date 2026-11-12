@@ -95,6 +95,7 @@ def engineer_features(df_cleaned):
     df_cleaned = df_cleaned.join(valid[perf_cols])
 
     df_cleaned = add_attendance_features(df_cleaned)
+    df_cleaned = add_v3_features(df_cleaned)
     df_cleaned = add_segment_features(df_cleaned)
 
     return df_cleaned
@@ -238,6 +239,85 @@ def add_attendance_features(df_cleaned):
     df_cleaned['meet_month'] = df_cleaned['Date'].dt.month
 
     return df_cleaned
+
+
+# ---- model v3 (2026-11-11): seven more history features, all from earlier meets only
+DAYS_PER_MONTH = 30.44
+SLOPE_WINDOW = 5  # meets, for the per-month trends and the spread of changes
+
+
+def _per_athlete(by, arrays, fn):
+    """Runs fn on each athlete's slice of the given arrays (rows must be grouped by athlete, as after the
+    Name, Date sort) and returns the concatenated result."""
+    codes = by.to_numpy()
+    cuts = np.flatnonzero(codes[1:] != codes[:-1]) + 1
+    out = np.full(len(codes), np.nan)
+    for a, b in zip(np.r_[0, cuts], np.r_[cuts, len(codes)]):
+        out[a:b] = fn(*[x[a:b] for x in arrays])
+    return out
+
+
+def prior_slope_per_month(y, t, window=SLOPE_WINDOW):
+    """Each row: least-squares slope of y per month (t in days) over the athlete's previous `window`
+    meets, skipping undated ones; NaN with fewer than 2 dated meets or all on one day.
+    app/api/_prediction.py mirrors this."""
+    out = np.full(len(y), np.nan)
+    for i in range(1, len(y)):
+        yy, tt = y[max(0, i - window):i], t[max(0, i - window):i]
+        ok = ~np.isnan(yy) & ~np.isnan(tt)
+        if ok.sum() >= 2:
+            tc = tt[ok] - tt[ok].mean()
+            den = (tc * tc).sum()
+            if den > 0:
+                out[i] = (tc * (yy[ok] - yy[ok].mean())).sum() / den * DAYS_PER_MONTH
+    return out
+
+
+def prior_change_spread(y, window=SLOPE_WINDOW):
+    """Each row: standard deviation (population) of the athlete's last `window` meet-to-meet changes;
+    needs 3 earlier meets (2 changes). app/api/_prediction.py mirrors this."""
+    out = np.full(len(y), np.nan)
+    for i in range(3, len(y)):
+        out[i] = np.diff(y[max(0, i - window - 1):i]).std()
+    return out
+
+
+def add_v3_features(df):
+    """Model v3: expects rows sorted by Name, Date, after add_performance_features. Performance ones use
+    real (non-bomb-out) meets only and are NaN on bomb-out rows, like the rest; the bodyweight trend uses
+    every meet."""
+    days = (df['Date'] - pd.Timestamp('1970-01-01')).dt.days.astype(float)
+    valid = df[~df['bombed_out']].copy()
+    v_days = days[valid.index]
+    by = valid['Name']
+    total = valid['Total'].astype(float)
+    prev = lambda s: s.groupby(by).shift(1)
+
+    # Weight left on the platform at the last meet: heaviest attempted (made or missed) minus heaviest made
+    sn_tried = valid[['Sn#1_attempted', 'Sn#2_attempted', 'Sn#3_attempted']].max(axis=1)
+    cj_tried = valid[['CJ#1_attempted', 'CJ#2_attempted', 'CJ#3_attempted']].max(axis=1)
+    valid['sn_left_on_platform'] = prev(sn_tried - valid['Best Sn'])
+    valid['cj_left_on_platform'] = prev(cj_tried - valid['Best CJ'])
+    # Trend in kg per month (not per meet) over the last 5 meets
+    valid['total_rate_per_month'] = _per_athlete(by, [total.to_numpy(), v_days.to_numpy()], prior_slope_per_month)
+    # How consistent: spread of the last 5 meet-to-meet changes
+    valid['change_volatility'] = _per_athlete(by, [total.to_numpy()], prior_change_spread)
+    # How far the last total is below the best
+    valid['gap_from_best'] = valid['best_total_to_date'] - valid['Last Comp Total']
+    # Long-run improvement: first real meet to the last one, in kg per month
+    first_total, first_day = total.groupby(by).transform('first'), v_days.groupby(by).transform('first')
+    span = prev(v_days) - first_day
+    valid['career_rate_per_month'] = ((prev(total) - first_total) / span * DAYS_PER_MONTH).where(span > 0)
+
+    df = df.join(valid[V3_PERFORMANCE_COLS])
+    # Bodyweight trend in kg per month over the last 5 meets (every meet)
+    df['bodyweight_trend_per_month'] = _per_athlete(
+        df['Name'], [df['Bodyweight'].astype(float).to_numpy(), days.to_numpy()], prior_slope_per_month)
+    return df
+
+
+V3_PERFORMANCE_COLS = ['sn_left_on_platform', 'cj_left_on_platform', 'total_rate_per_month',
+                       'change_volatility', 'gap_from_best', 'career_rate_per_month']
 
 
 def add_segment_features(df):

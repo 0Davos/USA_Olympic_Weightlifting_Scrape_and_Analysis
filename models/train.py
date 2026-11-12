@@ -67,7 +67,17 @@ QUANTILES = [0.01, 0.25, 0.50, 0.75, 0.99]
 # median error 6.87 -> 6.58kg (vs 8.16kg for "same as last total"); elite (best 330kg+) 99th-percentile
 # coverage 93.4% -> 96.8%. Must equal FEATURE_COLS in app/api/_prediction.py (the API passes features by
 # position; tests/check_prediction_features.py checks they match).
-QUANTILE_FEATURE_COLS = FEATURE_COLS + ['prev_division_code', 'career_days', 'meet_month']
+#
+# Model v3 (2026-11-11) adds seven more history features (transform/feature_engineering.py, add_v3_features):
+# weight left on the platform at the last meet (per lift), trend and career improvement in kg per month,
+# the spread of recent changes, and the gap from the best; plus the bodyweight trend. Backtest on the 2024+
+# test meets, scored at the last recorded bodyweight as the website predicts: median error 6.641 -> 6.558kg,
+# average pinball loss 1.900 -> 1.871, 1st-99th band 46.9 -> 45.0kg at the same coverage. The shipped models
+# are then trained on every meet (train_lightgbm_quantiles(final=True)), not just pre-2024 ones.
+V2_EXTRA_COLS = ['prev_division_code', 'career_days', 'meet_month']
+V3_EXTRA_COLS = ['sn_left_on_platform', 'cj_left_on_platform', 'total_rate_per_month', 'change_volatility',
+                 'gap_from_best', 'career_rate_per_month', 'bodyweight_trend_per_month']
+QUANTILE_FEATURE_COLS = FEATURE_COLS + V2_EXTRA_COLS + V3_EXTRA_COLS
 
 # The settings each percentile's model is trained with: what RandomizedSearchCV picked for the original
 # total-predicting models (2026-09-30; the 1st percentile 2026-11-08), kept for v2. A v2 tuning search was
@@ -236,18 +246,29 @@ def report_quantile_calibration(quantile_models, test, X_test):
         print(f"  best total {lv:>7} (n={sel.sum():,}): coverage {cov}")
 
 
-def train_lightgbm_quantiles(df, quantiles=QUANTILES, params=QUANTILE_PARAMS):
-    """Trains one LightGBM model per quantile with the given settings (no search), saves them (joblib
-    pickle + the API's text format) and prints the calibration check. Seconds per model, unlike tuning."""
-    train, test, X_train, X_test, y_train, y_test = prepare_quantile_train_test(df)
-    quantile_models = {}
+def _fit_quantiles(X, y, quantiles, params):
+    models = {}
     for q in quantiles:
         print(f"Training LightGBM quantile model for q={q} with {params[q]}...")
-        quantile_models[q] = LGBMRegressor(
+        models[q] = LGBMRegressor(
             objective='quantile', alpha=q, random_state=42, n_jobs=-1, verbose=-1, **params[q]
-        ).fit(X_train, y_train)
-    save_quantile_models(quantile_models)
+        ).fit(X, y)
+    return models
+
+
+def train_lightgbm_quantiles(df, quantiles=QUANTILES, params=QUANTILE_PARAMS, final=True):
+    """Trains one LightGBM model per quantile with the given settings (no search) on the pre-2024 meets and
+    prints the calibration check on the 2024+ ones. With final=True (the default since model v3) it then
+    trains them again on every meet, so the website's models learn from the newest results too, and saves
+    those; with final=False it saves the pre-2024 models that were checked. Seconds per model, unlike tuning."""
+    train, test, X_train, X_test, y_train, y_test = prepare_quantile_train_test(df)
+    quantile_models = _fit_quantiles(X_train, y_train, quantiles, params)
     report_quantile_calibration(quantile_models, test, X_test)
+    if final:
+        print(f"\nTraining the final models on all {len(X_train) + len(X_test):,} meets...")
+        quantile_models = _fit_quantiles(pd.concat([X_train, X_test]), pd.concat([y_train, y_test]),
+                                         quantiles, params)
+    save_quantile_models(quantile_models)
     return quantile_models
 
 
