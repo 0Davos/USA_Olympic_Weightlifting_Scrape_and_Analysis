@@ -8,7 +8,7 @@ This project builds an end-to-end system that:
 
 1. Scrapes all competition results from the USAW athlete portal using Playwright
 2. Stores the data in a CSV file with deduplication logic
-3. Cleans the data and engineers 24 leak-free features per competition entry to capture athlete trajectory, lift consistency, and competition history
+3. Cleans the data and engineers leak-free features per competition entry to capture athlete trajectory, lift consistency, and competition history (24 for the comparison models, 34 for the website's prediction models)
 4. Models athlete performance using Linear Regression, Random Forest, XGBoost, LightGBM, and CatBoost (plus a tuned-model ensemble, and LightGBM quantile models for prediction intervals)
 5. Evaluates each model through segmented analysis broken down by performance percentile within weight class to determine any imbalances
 6. Rebuilds the cleaned data automatically with GitHub Actions and loads it into a Supabase (Postgres) database
@@ -55,7 +55,7 @@ The exploration started in `EDA/EDA.ipynb`; the cleaning, feature engineering an
 
 ### Feature Engineering — `transform/feature_engineering.py`
 
-24 features engineered per competition entry, all using only data available before the current meet to prevent data leakage:
+Features engineered per competition entry, all using only data available before the current meet to prevent data leakage. The comparison models below use the first 24; the website's prediction models use all 34:
 
 | Category | Features |
 |---|---|
@@ -65,6 +65,8 @@ The exploration started in `EDA/EDA.ipynb`; the cleaning, feature engineering an
 | Trajectory | 3-comp rolling trend (slope), acceleration of improvement, improvement streak |
 | Lift balance | Snatch-to-C&J ratio, per-lift improvement rates over last 3 comps |
 | Competition history | Number of competitions, days since last comp, comp frequency (last 180 days), average days between comps, comp timing deviation |
+| Age and career *(prediction models)* | Age division at the previous meet, career length, month of the meet |
+| Recent form *(prediction models)* | Weight left on the platform at the last meet (heaviest attempted minus heaviest made, per lift), total trend and career improvement in kg per month, spread of recent meet-to-meet changes, gap from best total, bodyweight trend |
 
 ### Visualizations
 - Total vs. bodyweight scatterplot by gender
@@ -107,7 +109,9 @@ XGBoost, LightGBM, and CatBoost were each tuned with `RandomizedSearchCV` (5-fol
 
 #### Prediction intervals
 
-The website's predictions come from four LightGBM quantile models (25th, 50th, 75th and 99th percentile), trained with pinball loss. On 2024+ meets from returning athletes, 25.8 / 50.4 / 75.4 / 98.8% of actual totals fell below each predicted quantile (targets 25 / 50 / 75 / 99), so the bands are well calibrated.
+The website's predictions come from five LightGBM quantile models (1st, 25th, 50th, 75th and 99th percentile), trained with pinball loss on all 34 features. They predict the *change* from the athlete's last total rather than the total itself, which keeps elite lifters from being capped near the highest totals seen in training. Tested on 53,026 meets from 2024 onward (trained on earlier meets, and predicting at the athlete's last recorded bodyweight, as the site does), 1.2 / 26.2 / 50.8 / 75.4 / 98.5% of actual totals fell below each predicted percentile (targets 1 / 25 / 50 / 75 / 99), so the bands are well calibrated. The median is off by 6.56kg on average, against 8.09kg for guessing "same total as last meet". The models on the site are then retrained on every meet, including the newest.
+
+How the prediction models got here: predicting the change and adding age division, career length and month (v2) took the median error from 6.87 to 6.58kg (on an earlier, smaller test set of 48,876 meets); the recent-form features (v3) took it from 6.64 to 6.56kg on the test meets above and narrowed the 1st–99th percentile band from 46.9 to 45.0kg at the same coverage. Meet level and meet size were also tested and didn't help: an athlete's history already says most of what they would.
 
 #### Key Finding
 
@@ -154,7 +158,7 @@ A public, read-only site built on the pipeline above.
 |---|---|
 | Data refresh | Scraper run locally (USAW's 2FA can't be automated); pushing new data triggers a GitHub Actions workflow that cleans it, engineers features and reloads the database (`.github/workflows/clean-data.yml`) |
 | Database | Supabase Postgres, reloaded in one transaction per run, with the previous run's data kept in a backup table (`transform/load_to_supabase.py`, `transform/restore_from_backup.py`). The website uses a read-only login |
-| API | FastAPI on Vercel (`app/api/`). Predictions are computed live: the 27 features are rebuilt in plain Python (no pandas or scikit-learn, to fit Vercel's size limit) and the LightGBM models, saved in their native text format, are read and run by a small pure-Python tree reader (no `lightgbm` package, which Vercel's runtime can't load). The models predict the change from the athlete's last total. `tests/check_prediction_features.py` checks the rebuild matches the pipeline's features exactly, and `tests/check_tree_model.py` checks the reader matches LightGBM's own predictions. Rankings and charts are computed in SQL at request time and cached by Vercel's CDN for an hour |
+| API | FastAPI on Vercel (`app/api/`). Predictions are computed live: the 34 features are rebuilt in plain Python (no pandas or scikit-learn, to fit Vercel's size limit) and the LightGBM models, saved in their native text format, are read and run by a small pure-Python tree reader (no `lightgbm` package, which Vercel's runtime can't load). The models predict the change from the athlete's last total. `tests/check_prediction_features.py` checks the rebuild matches the pipeline's features exactly, and `tests/check_tree_model.py` checks the reader matches LightGBM's own predictions. Rankings and charts are computed in SQL at request time and cached by Vercel's CDN for an hour |
 | Frontend | Next.js, React, Tailwind and Recharts on Vercel (`app/`) |
 
 ## Setup
