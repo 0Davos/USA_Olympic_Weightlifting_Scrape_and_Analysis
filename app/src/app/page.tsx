@@ -1,5 +1,4 @@
 import Link from "next/link";
-import FeaturedAthlete from "@/components/FeaturedAthlete";
 import HomeCards from "@/components/HomeCards";
 import TopBar from "@/components/TopBar";
 import { CONTACT_EMAIL } from "@/lib/site";
@@ -13,7 +12,6 @@ export default function Home() {
         <h1 className="mb-8 text-2xl font-semibold sm:text-3xl">A full exploration of US Olympic Weightlifting data.</h1>
 
         <HomeCards />
-        <FeaturedAthlete />
 
         <section className="mt-10 text-xs leading-5 text-black/50 dark:text-white/50">
           <h2 className="mb-1 font-semibold">About the data</h2>
