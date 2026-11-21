@@ -20,7 +20,7 @@ export default function HomeCards() {
       <section className={BOX_CLASS}>
         <h2 className="text-lg font-semibold">Athlete pages</h2>
         <p className={BODY_CLASS}>
-          The main reason to visit: a prediction of any lifter&apos;s total at their next meet. Each page also has
+          A prediction of any lifter&apos;s total at their next meet. Each page also has
           their full competition history and a graph of every snatch, clean &amp; jerk and total.
         </p>
         <AthleteSearch
