@@ -26,7 +26,7 @@ export const METRIC_FIELD = {
   Total: "total",
 } as const satisfies Record<Metric, keyof Meet>;
 
-// ---- athletes on the graph (the page's athlete, then up to MAX_COMPARED compared ones)
+// ---- athletes on the graph (one on an athlete page, up to MAX_ON_GRAPH on the Compare page)
 
 export type MarkerShape = "circle" | "square" | "diamond";
 
@@ -42,7 +42,19 @@ export const ATHLETE_STYLES: AthleteStyle[] = [
   { color: "#16a34a", shape: "square", bandOuter: "#15803d", bandInner: "#4ade80" },
   { color: "#7c3aed", shape: "diamond", bandOuter: "#6d28d9", bandInner: "#60a5fa" },
 ];
-export const MAX_COMPARED = ATHLETE_STYLES.length - 1;
+export const MAX_ON_GRAPH = ATHLETE_STYLES.length; // athletes on the Compare page's graph
+
+// The same key the API matches names on (trimmed, whitespace collapsed, lowercased).
+export function nameKey(name: string) {
+  return name.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+// The Compare page's address for these athletes, one `athlete` parameter each (so a name containing a
+// comma can't break the link), in colour order.
+export function compareUrl(names: string[]): string {
+  const params = new URLSearchParams(names.map((n) => ["athlete", n]));
+  return names.length ? `/compare?${params}` : "/compare";
+}
 
 export type GraphSeries = { name: string; rows: Meet[] } & AthleteStyle;
 
