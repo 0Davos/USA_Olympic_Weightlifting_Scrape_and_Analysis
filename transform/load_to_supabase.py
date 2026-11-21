@@ -3,14 +3,26 @@
 # than incremental - the pipeline already does a full rebuild each run, and the
 # data is small enough (~35MB) that a full reload is cheap.
 
+#
+# The home page's summaries (Q-points lists, distributions, Fastest improvers, athlete counts) are built
+# once here, in the same transaction, and stored in the site_cache table for the API to read: built live
+# on every request they used up Supabase's Disk IO budget (see app/api/_summaries.py).
+#   python transform/load_to_supabase.py                   reload the data, then rebuild the summaries
+#   python transform/load_to_supabase.py --summaries-only  rebuild only the summaries (e.g. after editing
+#                                                          the rankings' hand-kept lists)
+
 import os
+import sys
 from dotenv import load_dotenv
 import pandas as pd
+from psycopg2.extras import RealDictCursor
 from sqlalchemy import create_engine, text
 
 from takedown import drop_listed, is_listed, load_hashes
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(SCRIPT_DIR, "..", "app", "api"))
+import _summaries  # noqa: E402  (the website API's summary builders)
 FEATURES_CSV_PATH = os.path.join(SCRIPT_DIR, "..", "data", "meet_results_FEATURES.csv")
 
 TABLE_NAME = "meet_results"
@@ -132,10 +144,33 @@ def load_to_supabase():
 
         conn.execute(text(f'TRUNCATE TABLE "{TABLE_NAME}"'))
         df.to_sql(TABLE_NAME, conn, if_exists='append', index=False, method='multi', chunksize=5000)
+        refresh_summaries(conn)
 
     print(f"Loaded {len(df)} rows into Supabase table '{TABLE_NAME}'")
 
 
+def refresh_summaries(conn):
+    """Rebuilds the site_cache summaries on this SQLAlchemy connection's transaction (so a failed build
+    rolls the whole load back, and the summaries always match the data)."""
+    # Visible to the builders' queries in this transaction, and planned from the new data.
+    conn.execute(text(f'ANALYZE "{TABLE_NAME}"'))
+    with conn.connection.cursor(cursor_factory=RealDictCursor) as cur:
+        keys = _summaries.refresh_cache(cur)
+    print(f"Rebuilt {len(keys)} home-page summaries in '{_summaries.CACHE_TABLE}': {', '.join(keys)}")
+
+
+def refresh_summaries_only():
+    db_url = os.environ.get("SUPABASE_DB_URL")
+    if not db_url:
+        print("Error: SUPABASE_DB_URL not found in environment variables")
+        return
+    with create_engine(db_url).begin() as conn:
+        refresh_summaries(conn)
+
+
 if __name__ == '__main__':
     load_dotenv()
-    load_to_supabase()
+    if "--summaries-only" in sys.argv[1:]:
+        refresh_summaries_only()
+    else:
+        load_to_supabase()

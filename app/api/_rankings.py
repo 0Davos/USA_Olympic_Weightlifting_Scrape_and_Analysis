@@ -2,8 +2,9 @@
 
 Q-points (Marianne Huebner's formula) scores a total relative to bodyweight on one scale for men and
 women. No age factor is applied: the source data has age divisions but no exact ages (see ROADMAP.md).
-Computed in SQL at request time from meet_results, so no extra table or pipeline step is needed; the
-API caches the response (see index.py), since the data only changes when the weekly reload runs.
+Computed in SQL from meet_results once per data load (transform/load_to_supabase.py stores the results
+in the site_cache table; see _summaries.py), since the data only changes when the weekly reload runs.
+A change to the rules or hand-kept lists here therefore shows on the site after the next load.
 
 The leading underscore keeps Vercel from treating this file as an endpoint.
 """
