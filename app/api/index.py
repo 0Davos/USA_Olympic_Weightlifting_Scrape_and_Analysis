@@ -1,7 +1,6 @@
 import logging
 import os
 import re
-from collections import Counter
 from contextlib import closing
 from datetime import date, timedelta
 from decimal import Decimal
@@ -12,7 +11,9 @@ import psycopg2
 from fastapi import FastAPI, HTTPException, Query, Response
 from psycopg2.extras import RealDictCursor
 
-import _rankings
+import _summaries
+# Shared with the load script, which builds the home page's summaries (see _summaries.py).
+from _summaries import NAME_DISPLAY_SQL, NAME_KEY_SQL, normalize, pick_display_name, to_json_row
 
 try:
     # Local dev only - on Vercel SUPABASE_DB_URL comes from the project's environment variables.
@@ -40,17 +41,6 @@ MIN_BODYWEIGHT, MAX_BODYWEIGHT = 0.1, 299.9
 # browser's copy can't be cleared from our side: a takedown or a late refresh shows within about an hour.
 # Errors (404/422/503) are raised as exceptions, so they never carry this header.
 CACHE_FOR_AN_HOUR = "public, max-age=3600, s-maxage=3600, stale-while-revalidate=86400"
-
-# Athletes are identified by name only, and the source has spelling noise (stray double
-# spaces, inconsistent capitalisation), so both endpoints match on a normalized key:
-# trimmed, whitespace collapsed, lowercased. NAME_DISPLAY_SQL is the same minus the
-# lowercasing, used to show a cleaned-up name.
-NAME_DISPLAY_SQL = r"regexp_replace(btrim(name), '\s+', ' ', 'g')"
-NAME_KEY_SQL = f"lower({NAME_DISPLAY_SQL})"
-
-
-def normalize(text: str) -> str:
-    return re.sub(r"\s+", " ", text).strip().lower()
 
 
 def get_connection():
@@ -85,21 +75,17 @@ def run_query(sql: str, params: tuple | dict) -> list[dict]:
     return with_cursor(work)
 
 
-def to_json_row(row: dict) -> dict:
-    out = {}
-    for key, value in row.items():
-        if isinstance(value, Decimal):
-            value = float(value)
-        elif isinstance(value, date):
-            value = value.isoformat()
-        out[key] = value
-    return out
+def summary(key: str) -> dict:
+    """A home-page summary: the copy stored by the last data load, or built live if there isn't one."""
 
+    def work(cur):
+        payload = _summaries.read_cached(cur, key)
+        if payload is None:
+            logger.warning("no stored summary %r - building it live (run transform/load_to_supabase.py)", key)
+            payload = _summaries.BUILDERS[key](cur)
+        return payload
 
-def pick_display_name(rows: list[dict]) -> str:
-    """The most common cleaned-up spelling among an athlete's rows (ties: alphabetical)."""
-    spellings = Counter(r["name"] for r in rows)
-    return sorted(spellings, key=lambda s: (-spellings[s], s))[0]
+    return with_cursor(work)
 
 
 @app.get("/api/health")
@@ -169,30 +155,18 @@ def q_points_rankings(response: Response, window: Literal["year", "all"] = "year
     """Top 10 men and top 10 women by Q-points, one row per athlete (their best result), over the past
     year or all time. Bomb-outs, very light bodyweights, implausible results (including a total far above
     the athlete's best elsewhere) and results excluded by hand are left out (see _rankings.py)."""
-    lists = with_cursor(
-        lambda cur: _rankings.compute_rankings(cur, window == "all", normalize, NAME_KEY_SQL, NAME_DISPLAY_SQL)
-    )
+    body = summary(f"q_points_{window}")
     response.headers["Cache-Control"] = CACHE_FOR_AN_HOUR
-
-    def entry(r: dict) -> dict:
-        out = to_json_row(r)
-        out["q_points"] = round(out["q_points"], 1)
-        return out
-
-    return {
-        "window": window,
-        "men": [entry(r) for r in lists["Men"]],
-        "women": [entry(r) for r in lists["Women"]],
-    }
+    return body
 
 
 @app.get("/api/rankings/q-points/distribution")
 def q_points_distribution(response: Response, window: Literal["year", "all"] = "year"):
     """How every athlete's best Q-points (past year or all time) is spread, per gender: a histogram plus
     the 25th/50th/75th/90th/99th percentile cutoffs, for the charts under the top 10s."""
-    dist = with_cursor(lambda cur: _rankings.compute_distribution(cur, window == "all", NAME_KEY_SQL))
+    body = summary(f"distribution_{window}")
     response.headers["Cache-Control"] = CACHE_FOR_AN_HOUR
-    return {"window": window, "men": dist["Men"], "women": dist["Women"]}
+    return body
 
 
 @app.get("/api/rankings/improvers")
@@ -200,19 +174,9 @@ def fastest_improvers(response: Response):
     """Top 10 men and women by Q-points gained: their latest meet (within the past 12 months) against
     their best at any earlier meet, for athletes with 3+ meets who also competed in the 12 months before it. Same data
     rules as the Q-points lists, plus names that look like two people are skipped (see _rankings.py)."""
-    found = with_cursor(
-        lambda cur: _rankings.compute_improvers(cur, normalize, NAME_KEY_SQL, NAME_DISPLAY_SQL)
-    )
+    body = summary("improvers")
     response.headers["Cache-Control"] = CACHE_FOR_AN_HOUR
-
-    def entry(r: dict) -> dict:
-        # rounded before subtracting, so the gain shown always equals now minus before as shown
-        out = to_json_row(r)
-        out["q_points"], out["before_q_points"] = round(out["q_points"], 1), round(out["before_q_points"], 1)
-        out["gain"] = round(out["q_points"] - out["before_q_points"], 1)
-        return out
-
-    return {"men": [entry(r) for r in found["Men"]], "women": [entry(r) for r in found["Women"]]}
+    return body
 
 
 @app.get("/api/athletes/predict")
@@ -294,61 +258,11 @@ def ath_predict(
         "assumes_no_bomb_out": True,
     }
 
-# ---- athlete counts (the two bar charts at the bottom of the home page)
-
-# The USAW records effectively start in 2012: about 150 athletes have a "first meet" before that, on
-# impossible dates (1905, 1958, ...), so the new-athletes chart starts here and leaves those out. 2012
-# itself also counts everyone who was already competing when the records begin.
-STATS_FIRST_YEAR = 2012
-# The meets-per-athlete chart has one bar per count up to this; athletes with more are reported as a number.
-STATS_MAX_MEETS_BAR = 30
-
 
 @app.get("/api/stats/athletes")
 def athlete_stats(response: Response):
-    """New athletes per year (each athlete counted in the year of their first dated meet) and how many
-    athletes have attended each number of meets, all time. Athletes are name keys, as everywhere on the
-    site; a meet is a distinct (meet, date), bomb-outs included. One pass over the table (about 3s of the
-    5s statement timeout from a dev machine), plus an indexed lookup of the most-meets athlete's name: taking
-    the name in the pass itself pushed it over the timeout."""
-
-    def work(cur):
-        cur.execute(f"""
-        WITH athletes AS (
-            SELECT {NAME_KEY_SQL} AS key, min(date) AS first,
-                   count(DISTINCT (lower(regexp_replace(btrim(meet), '\\s+', ' ', 'g')), date)) AS meets
-            FROM meet_results
-            WHERE date IS NULL OR date <= current_date
-            GROUP BY 1
-        )
-        SELECT 'year' AS kind, extract(year FROM first)::int AS value, count(*) AS athletes, NULL AS name
-        FROM athletes WHERE first IS NOT NULL GROUP BY 2
-        UNION ALL
-        SELECT 'meets', meets::int, count(*), NULL FROM athletes GROUP BY 2
-        UNION ALL
-        (SELECT 'most', meets::int, 1, key FROM athletes ORDER BY meets DESC, key LIMIT 1)
-        """)
-        found = cur.fetchall()
-        top = next((r["name"] for r in found if r["kind"] == "most"), None)
-        names = []
-        if top:
-            cur.execute(f"SELECT {NAME_DISPLAY_SQL} AS name FROM meet_results WHERE {NAME_KEY_SQL} = %s", (top,))
-            names = cur.fetchall()
-        return found, (pick_display_name(names) if names else None)
-
-    rows, most_name = with_cursor(work)
+    """New athletes per year and how many athletes have attended each number of meets, all time, for the
+    two bar charts at the bottom of the home page (see _summaries.build_stats)."""
+    body = summary("stats_athletes")
     response.headers["Cache-Control"] = CACHE_FOR_AN_HOUR
-    by_year = {r["value"]: r["athletes"] for r in rows if r["kind"] == "year"}
-    by_meets = {r["value"]: r["athletes"] for r in rows if r["kind"] == "meets"}
-    more = [m for m in by_meets if m > STATS_MAX_MEETS_BAR]
-    return {
-        "new_per_year": [{"year": y, "athletes": by_year.get(y, 0)}
-                         for y in range(STATS_FIRST_YEAR, date.today().year + 1)],
-        "current_year": date.today().year,
-        "meets_per_athlete": [{"meets": m, "athletes": by_meets.get(m, 0)}
-                              for m in range(1, STATS_MAX_MEETS_BAR + 1)],
-        # the athlete with the most meets, linked from the chart
-        "more_meets": {"athletes": sum(by_meets[m] for m in more), "most": max(more, default=None),
-                       "most_name": most_name},
-        "athletes": sum(by_meets.values()),
-    }
+    return body

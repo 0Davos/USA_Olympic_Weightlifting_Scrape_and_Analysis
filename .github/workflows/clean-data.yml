@@ -7,6 +7,9 @@ on:
       - 'data/meet_results.csv'
       - 'data/takedown_list.txt'   # a removal request rebuilds the site's table without that athlete
       - 'transform/takedown.py'
+      # the home-page summaries are built at load time, so rule or hand-kept-list changes need a load
+      - 'app/api/_rankings.py'
+      - 'app/api/_summaries.py'
   workflow_dispatch:
 
 jobs:

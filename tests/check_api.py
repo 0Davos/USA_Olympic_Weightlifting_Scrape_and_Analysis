@@ -194,6 +194,7 @@ if variants:
 
 # ================= Q-points rankings (home page top 10s)
 import _rankings  # noqa: E402
+import _summaries  # noqa: E402
 
 ranked = {}
 for w in ("year", "all"):
@@ -219,13 +220,15 @@ if ranked["year"]:
 if ranked["year"] and ranked["all"]:
     check("rankings: the all-time leaders score at least as high as the past year's",
           all(ranked["all"][g][0]["q_points"] >= ranked["year"][g][0]["q_points"] for g in ("men", "women")))
-    # Excluding the all-time women's leader's result by hand must drop it from the list.
+    # Excluding the all-time women's leader's result by hand must drop it from the list. Built directly:
+    # the endpoint serves the copy stored at the last data load.
     lead = ranked["all"]["women"][0]
     saved_excluded = _rankings.EXCLUDED_RESULTS
     _rankings.EXCLUDED_RESULTS = [(lead["name"], lead["meet"], lead["date"], lead["total"], "check")]
-    r = get("/api/rankings/q-points", window="all")
-    _rankings.EXCLUDED_RESULTS = saved_excluded
-    after = r.json()["women"] if r.status_code == 200 else []
+    try:
+        after = index.with_cursor(lambda cur: _summaries.build_q_points(cur, "all"))["women"]
+    finally:
+        _rankings.EXCLUDED_RESULTS = saved_excluded
     check("rankings: a result on the exclusion list drops out",
           bool(after) and not any(x["name"] == lead["name"] and x["meet"] == lead["meet"] and x["date"] == lead["date"] for x in after),
           f"{lead['name']} at {lead['meet']}")
@@ -259,6 +262,32 @@ if dist["year"] and dist["all"]:
           all(dist["all"][g]["athletes"] > dist["year"][g]["athletes"] for g in ("men", "women")))
 r = client.get("/api/rankings/q-points/distribution", params={"window": "month"})
 check("distribution: an unknown window -> 422", r.status_code == 422)
+
+# ================= stored summaries (site_cache, written by transform/load_to_supabase.py)
+SUMMARY_URLS = {
+    "q_points_year": ("/api/rankings/q-points", {"window": "year"}),
+    "q_points_all": ("/api/rankings/q-points", {"window": "all"}),
+    "distribution_year": ("/api/rankings/q-points/distribution", {"window": "year"}),
+    "distribution_all": ("/api/rankings/q-points/distribution", {"window": "all"}),
+    "improvers": ("/api/rankings/improvers", {}),
+    "stats_athletes": ("/api/stats/athletes", {}),
+}
+check("summaries: every builder has an endpoint check", set(SUMMARY_URLS) == set(_summaries.BUILDERS))
+for key, (url, params) in SUMMARY_URLS.items():
+    stored = index.with_cursor(lambda cur: _summaries.read_cached(cur, key))
+    r = get(url, **params)
+    check(f"summaries ({key}): stored by the last load and served as is",
+          stored is not None and r.status_code == 200 and r.json() == stored,
+          "no stored copy - run python transform/load_to_supabase.py --summaries-only" if stored is None else str(r.status_code))
+# With no cache table the endpoints build the summary live, as before.
+saved_table = _summaries.CACHE_TABLE
+_summaries.CACHE_TABLE = "site_cache_does_not_exist"
+try:
+    live = get("/api/rankings/q-points", window="year")
+finally:
+    _summaries.CACHE_TABLE = saved_table
+check("summaries: no stored copy -> built live, same answer",
+      live.status_code == 200 and ranked.get("year") is not None and live.json() == ranked["year"], str(live.status_code))
 
 # ================= caching: successful reads may be reused for an hour, errors never
 for label, url, params in (
