@@ -56,7 +56,7 @@ def fetch(path, **params):
 print(f"smoke-testing {BASE}\n")
 
 # ---- pages
-for path in ("/", "/about", "/privacy"):
+for path in ("/", "/about", "/privacy", "/rankings", "/stats", "/compare", "/compare?athlete=A&athlete=B"):
     status, body, secs = fetch(path)
     check(f"page {path} loads", status == 200, f"{status}, {secs:.1f}s" + (f", {body}" if status is None else ""))
 status, body, _ = fetch("/this-page-does-not-exist")
