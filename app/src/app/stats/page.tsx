@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import AthleteStatsCharts from "@/components/AthleteStatsCharts";
-import FastestImprovers from "@/components/FastestImprovers";
-import QPointsLists from "@/components/QPointsLists";
+import QPointsSpread from "@/components/QPointsSpread";
 import TopBar from "@/components/TopBar";
 
 export const metadata: Metadata = { title: "Stats & Graphs" };
@@ -14,8 +13,7 @@ export default function StatsPage() {
 
       <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-10">
         <h1 className="mb-6 text-2xl font-semibold">Stats &amp; Graphs</h1>
-        <QPointsLists />
-        <FastestImprovers />
+        <QPointsSpread />
         <AthleteStatsCharts />
       </main>
 
